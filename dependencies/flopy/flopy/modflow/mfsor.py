@@ -7,6 +7,7 @@ MODFLOW Guide
 <https://water.usgs.gov/nrp/gwsoftware/modflow2000/Guide/sor.html>`_.
 
 """
+
 from ..pakbase import Package
 
 
@@ -164,10 +165,7 @@ class ModflowSor(Package):
 
         # dataset 0 -- header
 
-        print(
-            "   Warning: load method not completed. "
-            "Default sor object created."
-        )
+        print("   Warning: load method not completed. Default sor object created.")
 
         if openfile:
             f.close()

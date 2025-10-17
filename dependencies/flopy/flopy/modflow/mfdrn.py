@@ -7,6 +7,7 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow/MODFLOW-2005-Guide/drn.html>`_.
 
 """
+
 import numpy as np
 
 from ..pakbase import Package
@@ -23,12 +24,10 @@ class ModflowDrn(Package):
     model : model object
         The model object (of type :class:`flopy.modflow.mf.Modflow`) to which
         this package will be added.
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is None).
-    stress_period_data : list of boundaries, recarrays, or dictionary of
-        boundaries.
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
+    stress_period_data : list, recarray, dataframe or dictionary of boundaries.
         Each drain cell is defined through definition of
         layer(int), row(int), column(int), elevation(float),
         conductance(float).
@@ -74,9 +73,9 @@ class ModflowDrn(Package):
         filenames=None the package name will be created using the model name
         and package extension and the cbc output name will be created using
         the model name and .cbc extension (for example, modflowtest.cbc),
-        if ipakcbc is a number greater than zero. If a single string is passed
+        if ipakcb is a number greater than zero. If a single string is passed
         the package will be set to the string and cbc output names will be
-        created using the model name and .cbc extension, if ipakcbc is a
+        created using the model name and .cbc extension, if ipakcb is a
         number greater than zero. To define the names for all package files
         (input and output) the length of the list of strings should be 2.
         Default is None.
@@ -93,8 +92,8 @@ class ModflowDrn(Package):
     Notes
     -----
     Parameters are not supported in FloPy.
-    If "RETURNFLOW" in passed in options, the drain return package (DRT) activated, which expects
-    a different (longer) dtype for stress_period_data
+    If "RETURNFLOW" in passed in options, the drain return package (DRT)
+    activated, which expects a different (longer) dtype for stress_period_data
 
     Examples
     --------
@@ -126,13 +125,8 @@ class ModflowDrn(Package):
         # set filenames
         filenames = self._prepare_filenames(filenames, 2)
 
-        # update external file information with cbc output, if necessary
-        if ipakcb is not None:
-            model.add_output_file(
-                ipakcb, fname=filenames[1], package=self._ftype()
-            )
-        else:
-            ipakcb = 0
+        # cbc output file
+        self.set_cbc_output_file(ipakcb, model, filenames[1])
 
         if options is None:
             options = []
@@ -157,8 +151,6 @@ class ModflowDrn(Package):
 
         self._generate_heading()
         self.url = "drn.html"
-
-        self.ipakcb = ipakcb
 
         self.np = 0
 
@@ -231,14 +223,8 @@ class ModflowDrn(Package):
         None
 
         """
-        if (
-            check
-        ):  # allows turning off package checks when writing files at model level
-            self.check(
-                f=f"{self.name[0]}.chk",
-                verbose=self.parent.verbose,
-                level=1,
-            )
+        if check:  # allows turning off package checks when writing files at model level
+            self.check(f=f"{self.name[0]}.chk", verbose=self.parent.verbose, level=1)
         f_drn = open(self.fn_path, "w")
         f_drn.write(f"{self.heading}\n")
         line = f"{self.stress_period_data.mxact:10d}{self.ipakcb:10d}"
@@ -261,9 +247,7 @@ class ModflowDrn(Package):
     @staticmethod
     def get_empty(ncells=0, aux_names=None, structured=True, is_drt=False):
         # get an empty recarray that corresponds to dtype
-        dtype = ModflowDrn.get_default_dtype(
-            structured=structured, is_drt=is_drt
-        )
+        dtype = ModflowDrn.get_default_dtype(structured=structured, is_drt=is_drt)
         if aux_names is not None:
             dtype = Package.add_to_dtype(dtype, aux_names, np.float32)
         return create_empty_recarray(ncells, dtype, default_value=-1.0e10)

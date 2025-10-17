@@ -24,8 +24,7 @@ class ModflowChd(Package):
     model : model object
         The model object (of type :class:`flopy.modflow.mf.Modflow`) to which
         this package will be added.
-    stress_period_data : list of boundaries, recarrays, or dictionary of
-        boundaries.
+    stress_period_data : list, recarray, dataframe, or dictionary of boundaries.
 
         Each chd cell is defined through definition of
         layer (int), row (int), column (int), shead (float), ehead (float)
@@ -131,9 +130,7 @@ class ModflowChd(Package):
         if dtype is not None:
             self.dtype = dtype
         else:
-            self.dtype = self.get_default_dtype(
-                structured=self.parent.structured
-            )
+            self.dtype = self.get_default_dtype(structured=self.parent.structured)
         self.stress_period_data = MfList(self, stress_period_data)
 
         self.np = 0

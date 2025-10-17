@@ -19,12 +19,14 @@ simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 opt_files_path = os.path.join(
                     os.path.dirname(os.path.abspath( __file__ )),
                     'opt_files')
+
 foward_path = os.path.dirname(os.path.abspath( __file__ ))
 suffix = "OK"
 
 
 def create_swatp_pst_con(
-            prj_dir, swatp_wd, cal_start, cal_end, chs, 
+            prj_dir, swatp_wd, cal_start, cal_end, chs,
+            grids=None, 
             irr_cal=None,
             time_step=None
             ):
@@ -36,13 +38,15 @@ def create_swatp_pst_con(
         'prj_dir',
         'swatp_wd', 'cal_start', 'cal_end',
         'chs',
+        'grids',
         'irr_cal',
-        'time_step',
+        'time_step'
         ]
     col02 = [
         prj_dir,
         swatp_wd, cal_start, cal_end, 
         chs,
+        grids,
         irr_cal, 
         time_step,
         ]
@@ -67,6 +71,7 @@ def init_setup(prj_dir, swatp_wd):
         "pestpp-ies.exe",
         "pestpp-opt.exe",
         "pestpp-sen.exe",
+        "rev61.0.1_64rel.exe"
         ]
     suffix = ' passed'
     print(" Creating 'main_opt' folder in working directory ...",  end='\r', flush=True)
@@ -83,6 +88,7 @@ def init_setup(prj_dir, swatp_wd):
         print(" Creating 'main_opt' folder ..." + colored(suffix, 'green'))
 
         # copy files from opt_files folder
+        # print(filesToCopy)
         for j in filesToCopy:
             if not os.path.isfile(os.path.join(main_opt_path, j)):
                 shutil.copy2(os.path.join(opt_files_path, j), os.path.join(main_opt_path, j))
@@ -666,6 +672,49 @@ class SWATp(object):
                 float_format='%.7e')
             print(f'crop_aa_{i}.txt file has been created...')
         print('Finished ...')
+        
+    def extract_sim_waterlevel(self, start_day, end_day, time_step="day"):
+        """extract a simulated depth to water using modflow.obs and gwflow_state_obs_head,
+            store it in each channel file.
+
+        Args:
+            - rch_file (`str`): the path and name of the existing output file
+            - channels (`list`): channel number in a list, e.g. [9, 60]
+            - start_day ('str'): simulation start day after warmup period, e.g. '1/1/1985'
+            - end_day ('str'): simulation end day e.g. '12/31/2000'
+
+        Example:
+            pest_utils.extract_depth_to_water('path', [9, 60], '1/1/1993', '12/31/2000')
+        """
+        if not os.path.exists('gwflow_state_obs_head'):
+            raise Exception("'gwflow_state_obs_head' file not found")
+        
+        # get grid ids
+        with open("gwflow_state_obs_head", 'r') as inf:
+            data = inf.readlines()
+        gridIds = data[1].split()[1:]
+        mf_sim = pd.read_csv(
+                            'gwflow_state_obs_head', skiprows=3, sep=r'\s+',
+                            header=None
+                            )
+        mf_sim = mf_sim.iloc[:, 2:]
+        mf_sim.columns = gridIds
+        
+
+        mf_sim.index = pd.date_range(start_day, periods=len(mf_sim))
+        if time_step == "day":
+            mf_sim = mf_sim[start_day:end_day]
+        if time_step == "month":
+            mf_sim = mf_sim[start_day:end_day].resample('M').mean()
+        for i in mf_sim.columns:  # use land surface elevation to get depth to water
+            (mf_sim.loc[:, i]).to_csv(
+                            'gwl_{}.txt'.format(i), sep='\t', encoding='utf-8',
+                            index=True, header=False, float_format='%.7e'
+                            )
+            print(' >>> gwl_{}.txt file has been created...'.format(i))
+        print(' >>> Finished ...')
+
+
 
 
     def get_mon_irr(self):
@@ -1048,42 +1097,42 @@ def get_last_day_of_month(df):
     return df
 
 
-def init_setup(prj_dir, swatp_wd):
-    filesToCopy = [
-        "i64pwtadj1.exe",
-        "pestpp-glm.exe",
-        "pestpp-ies.exe",
-        "pestpp-opt.exe",
-        "pestpp-sen.exe",
-        ]
-    suffix = ' passed'
-    print(" Creating 'main_opt' folder in working directory ...",  end='\r', flush=True)
+# def init_setup(prj_dir, swatp_wd):
+#     filesToCopy = [
+#         "i64pwtadj1.exe",
+#         "pestpp-glm.exe",
+#         "pestpp-ies.exe",
+#         "pestpp-opt.exe",
+#         "pestpp-sen.exe",
+#         ]
+#     suffix = ' passed'
+#     print(" Creating 'main_opt' folder in working directory ...",  end='\r', flush=True)
 
-    main_opt_path = os.path.join(prj_dir, 'main_opt')
+#     main_opt_path = os.path.join(prj_dir, 'main_opt')
 
-    if not os.path.isdir(main_opt_path):
-        os.makedirs(main_opt_path)
-        filelist = [f for f in os.listdir(swatp_wd) if os.path.isfile(os.path.join(swatp_wd, f))]
-        for i in tqdm(filelist):
-        # print(i)
-        # if os.path.getsize(os.path.join(swatwd, i)) != 0:
-            shutil.copy2(os.path.join(swatp_wd, i), main_opt_path)
-        print(" Creating 'main_opt' folder ..." + colored(suffix, 'green'))
+#     if not os.path.isdir(main_opt_path):
+#         os.makedirs(main_opt_path)
+#         filelist = [f for f in os.listdir(swatp_wd) if os.path.isfile(os.path.join(swatp_wd, f))]
+#         for i in tqdm(filelist):
+#         # print(i)
+#         # if os.path.getsize(os.path.join(swatwd, i)) != 0:
+#             shutil.copy2(os.path.join(swatp_wd, i), main_opt_path)
+#         print(" Creating 'main_opt' folder ..." + colored(suffix, 'green'))
 
-        # copy files from opt_files folder
-        for j in filesToCopy:
-            if not os.path.isfile(os.path.join(main_opt_path, j)):
-                shutil.copy2(os.path.join(opt_files_path, j), os.path.join(main_opt_path, j))
-                print(" '{}' file copied ...".format(j) + colored(suffix, 'green'))
-        # copy forward_run.py
-        if not os.path.isfile(os.path.join(main_opt_path, 'forward_run.py')):
-            shutil.copy2(os.path.join(foward_path, 'forward_run.py'), os.path.join(main_opt_path, 'forward_run.py'))
-            print(" '{}' file copied ...".format('forward_run.py') + colored(suffix, 'green'))
-        os.chdir(main_opt_path)       
-    else:
-        print("failed to create 'main_opt' folder, folder already exists ..." )
-    os.chdir(main_opt_path)
-    print(f"path to main_opt folder: {main_opt_path}")
+#         # copy files from opt_files folder
+#         for j in filesToCopy:
+#             if not os.path.isfile(os.path.join(main_opt_path, j)):
+#                 shutil.copy2(os.path.join(opt_files_path, j), os.path.join(main_opt_path, j))
+#                 print(" '{}' file copied ...".format(j) + colored(suffix, 'green'))
+#         # copy forward_run.py
+#         if not os.path.isfile(os.path.join(main_opt_path, 'forward_run.py')):
+#             shutil.copy2(os.path.join(foward_path, 'forward_run.py'), os.path.join(main_opt_path, 'forward_run.py'))
+#             print(" '{}' file copied ...".format('forward_run.py') + colored(suffix, 'green'))
+#         os.chdir(main_opt_path)       
+#     else:
+#         print("failed to create 'main_opt' folder, folder already exists ..." )
+#     os.chdir(main_opt_path)
+#     print(f"path to main_opt folder: {main_opt_path}")
 
 
 class Paddy(SWATp):

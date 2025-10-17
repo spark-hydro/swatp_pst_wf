@@ -165,6 +165,78 @@ class PstUtil:
 
 
 
+    def mf_obd_to_ins(
+            self, wt_file, col_name, cal_start, cal_end,
+            time_step="day", gType="waterlevel"
+            ):
+        """extract a simulated groundwater levels from the  file,
+            store it in each channel file.
+
+        Args:
+            - rch_file (`str`): the path and name of the existing output file
+            - channels (`list`): channel number in a list, e.g. [9, 60]
+            - start_day ('str'): simulation start day after warmup period, e.g. '1/1/1993'
+            - end_day ('str'): simulation end day e.g. '12/31/2000'
+
+        Example:
+            pest_utils.extract_month_str('path', [9, 60], '1/1/1993', '12/31/2000')
+        """ 
+        if gType != "waterlevel":
+            print("gType should be waterlevel")
+            gwlType = "dtw"
+            if time_step == "day":
+                mf_obd_file = f"{gwlType}_day.obd.csv"
+            if time_step == "month":
+                mf_obd_file = f"{gwlType}_mon.obd.csv"
+        else:
+            print("gType is waterlevel")
+            gwlType = "gwl"
+            if time_step == "day":
+                mf_obd_file = f"{gwlType}_day.obd.csv"
+            if time_step == "month":
+                mf_obd_file = f"{gwlType}_mon.obd.csv"   
+
+
+        print(gwlType, mf_obd_file)         
+
+        mf_obd = pd.read_csv(
+                            mf_obd_file,
+                            usecols=['date', col_name],
+                            index_col=0,
+                            na_values=[-999, ""],
+                            parse_dates=True,
+                            )
+        mf_obd = mf_obd[cal_start:cal_end]
+
+        wt_sim = pd.read_csv(
+                            wt_file,
+                            delim_whitespace=True,
+                            names=["date", "stf_sim"],
+                            index_col=0,
+                            parse_dates=True)
+
+        result = pd.concat([mf_obd, wt_sim], axis=1)
+
+        result['tdate'] = pd.to_datetime(result.index)
+        result['day'] = result['tdate'].dt.day
+        result['month'] = result['tdate'].dt.month
+        result['year'] = result['tdate'].dt.year
+        result['ins'] = (
+                        'l1 w !{}_'.format(col_name) + result["year"].map(str) +
+                        result["month"].map('{:02d}'.format) +
+                        result["day"].map('{:02d}'.format) + '!'
+                        )
+        result['{}_ins'.format(col_name)] = np.where(result[col_name].isnull(), 'l1', result['ins'])
+
+        with open(wt_file+'.ins', "w", newline='') as f:
+            f.write("pif ~" + "\n")
+            result['{}_ins'.format(col_name)].to_csv(f, sep='\t', encoding='utf-8', index=False, header=False)
+        print('{}.ins file has been created...'.format(wt_file))
+
+        return result['{}_ins'.format(col_name)]
+
+
+
     def read_cal(self):
         return pd.read_csv(
                         'calibration.cal',
@@ -219,6 +291,7 @@ class PstUtil:
                                     header=False,
                                     justify="left"))
         # '''
+
         return cal_df
 
 
@@ -229,9 +302,52 @@ class PstUtil:
                         skiprows=2,
                         )     
 
-    def update_par_inits_rgs(self, precal_df):
+    # NOTE: loop and add info in dictionary
+    def gw_input_to_tpl(self):
+        gwInFile = "gwflow.input"
+        tpl_file = gwInFile + ".tpl"
+        with open(gwInFile, "r") as inf:
+            data = inf.readlines()
+        # print(data)
+        parinfo = {}
+        for i , line in enumerate(data):
+            if line.strip().lower().startswith("aquifer hydraulic conductivity"):
+                parinfo['hc'] = [i+1, int(data[i+1].strip())]
+            if line.strip().lower().startswith("aquifer specific yield"):
+                parinfo['sy'] = [i+1, int(data[i+1].strip())]
+            if line.strip().lower().startswith("streambed hydraulic conductivity"):
+                parinfo['strbed_hc'] = [i+1, int(data[i+1].strip())]     
+            if line.strip().lower().startswith("streambed thickness"):
+                parinfo['strbed_tk'] = [i+1, int(data[i+1].strip())]
+
+        for parnam in parinfo.keys():
+            paridx = parinfo[parnam][0] + 1
+            parlen = parinfo[parnam][1]
+
+            for i in range(paridx, paridx+parlen):
+                line  = data[i]
+                newline = self.replace_line(parnam, line)
+                data[i] = newline
+        
+        with open(tpl_file, "w") as wf:
+            wf.write("ptf ~\n")
+            wf.writelines(data)
+        print('  Finished ...')
+
+    def replace_line(self, parnam, line):
+        parts = line.split()
+        new_line = (
+            f'{int(parts[0]):<4d}' + f' ~ {parnam}{int(parts[0]):03d} ~ ' + "\n"
+            )
+        return new_line
+
+
+
+    # NOTE: I am working on this function
+    def update_par_inits_rgs(self, adjust_par):
         
         cal_adj = self.read_cal()
+        cal_adj.rename(columns={0: "cal_parm", 1: "chg_type", 2: "cal_val"}, inplace=True)
         cal_db = self.read_cal_parms()
         for i in cal_adj.index:
             par = cal_adj.loc[i, "cal_parm"]

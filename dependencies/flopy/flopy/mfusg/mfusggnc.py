@@ -5,6 +5,7 @@ This is for the Ghost Node Correction (GNC) Package for MODFLOW-USG.
 Contains the MfUsgGnc class. Note that the user can access
 the MfUsgGnc class as `flopy.mfusg.MfUsgGnc`.
 """
+
 import numpy as np
 
 from ..modflow.mfparbc import ModflowParBc as mfparbc
@@ -127,9 +128,7 @@ class MfUsgGnc(Package):
         if 0 < numalphaj < 6:
             self.numalphaj = numalphaj
         else:
-            raise Exception(
-                "mfgnc: incorrect number of adjacent contributing nodes"
-            )
+            raise Exception("mfgnc: incorrect number of adjacent contributing nodes")
 
         self.i2kn = i2kn
         self.isymgncn = isymgncn
@@ -139,9 +138,7 @@ class MfUsgGnc(Package):
             raise Exception("mfgnc: GNC data must be provided")
 
         if len(gncdata) != self.numgnc:
-            raise Exception(
-                "mfgnc: Length of GNC data must equal number of GNC nodes"
-            )
+            raise Exception("mfgnc: Length of GNC data must equal number of GNC nodes")
 
         self.dtype = MfUsgGnc.get_default_dtype(self.numalphaj, self.iflalphan)
 
@@ -198,12 +195,7 @@ class MfUsgGnc(Package):
     @staticmethod
     def get_default_dtype(numalphaj, iflalphan):
         """Returns default GNC dtypes."""
-        dtype = np.dtype(
-            [
-                ("NodeN", int),
-                ("NodeM", int),
-            ]
-        ).descr
+        dtype = np.dtype([("NodeN", int), ("NodeM", int)]).descr
 
         for idx in range(numalphaj):
             dtype.append((f"Node{idx:d}", "<i4"))
@@ -217,7 +209,7 @@ class MfUsgGnc(Package):
 
     @staticmethod
     def get_empty(numgnc=0, numalphaj=1, iflalphan=0):
-        """Returns empty GNC recarray of defualt dtype."""
+        """Returns empty GNC recarray of default dtype."""
         # get an empty recarray that corresponds to dtype
         dtype = MfUsgGnc.get_default_dtype(numalphaj, iflalphan)
         return create_empty_recarray(numgnc, dtype, default_value=-1.0e10)

@@ -6,9 +6,11 @@ import numpy as np
 import pandas as pd
 from matplotlib.collections import LineCollection, PathCollection
 from matplotlib.path import Path
+from numpy.lib.recfunctions import stack_arrays
 
 from ..utils import geometry
 from . import plotutil
+from .plotutil import to_mp7_endpoints, to_mp7_pathlines
 
 warnings.simplefilter("always", PendingDeprecationWarning)
 
@@ -40,9 +42,7 @@ class PlotMapView:
 
     """
 
-    def __init__(
-        self, model=None, modelgrid=None, ax=None, layer=0, extent=None
-    ):
+    def __init__(self, model=None, modelgrid=None, ax=None, layer=0, extent=None):
         self.model = model
         self.layer = layer
         self.mg = None
@@ -79,6 +79,25 @@ class PlotMapView:
         if self._extent is None:
             self._extent = self.mg.extent
         return self._extent
+
+    def _set_axes_limits(self, ax):
+        """
+        Internal method to set axes limits
+
+        Parameters
+        ----------
+        ax : matplotlib.pyplot axis
+            The plot axis
+
+        Returns
+        -------
+        ax : matplotlib.pyplot axis object
+
+        """
+        if ax.get_autoscale_on():
+            ax.set_xlim(self.extent[0], self.extent[1])
+            ax.set_ylim(self.extent[2], self.extent[3])
+        return ax
 
     def plot_array(self, a, masked_values=None, **kwargs):
         """
@@ -128,9 +147,7 @@ class PlotMapView:
             return
 
         if not isinstance(polygons[0], Path):
-            collection = ax.pcolormesh(
-                self.mg.xvertices, self.mg.yvertices, plotarray
-            )
+            collection = ax.pcolormesh(self.mg.xvertices, self.mg.yvertices, plotarray)
 
         else:
             plotarray = plotarray.ravel()
@@ -150,21 +167,28 @@ class PlotMapView:
         ax.add_collection(collection)
 
         # set limits
-        ax.set_xlim(self.extent[0], self.extent[1])
-        ax.set_ylim(self.extent[2], self.extent[3])
+        ax = self._set_axes_limits(ax)
         return collection
 
-    def contour_array(self, a, masked_values=None, **kwargs):
+    def contour_array(self, a, masked_values=None, tri_mask=False, **kwargs):
         """
-        Contour an array.  If the array is three-dimensional, then the method
-        will contour the layer tied to this class (self.layer).
+        Contour an array on the grid. By default the top layer
+        is contoured. To select a different layer, specify the
+        layer in the class constructor.
+
+        For structured and vertex grids, the array may be 1D, 2D or 3D.
+        For unstructured grids, the array must be 1D or 2D.
 
         Parameters
         ----------
-        a : numpy.ndarray
+        a : 1D, 2D or 3D array-like
             Array to plot.
         masked_values : iterable of floats, ints
             Values to mask.
+        tri_mask : bool
+            Boolean flag that masks triangulation and contouring
+            by nearest grid neighbors. This flag is useful for contouring
+            on unstructured model domains that have holes in the grid.
         **kwargs : dictionary
             keyword arguments passed to matplotlib.pyplot.pcolormesh
 
@@ -191,7 +215,6 @@ class PlotMapView:
         ax = kwargs.pop("ax", self.ax)
         filled = kwargs.pop("filled", False)
         plot_triplot = kwargs.pop("plot_triplot", False)
-        tri_mask = kwargs.pop("tri_mask", False)
 
         if "colors" in kwargs.keys():
             if "cmap" in kwargs.keys():
@@ -275,7 +298,7 @@ class PlotMapView:
                     for ix, nodes in enumerate(triangles):
                         neighbors = self.mg.neighbors(nodes[i], as_nodes=True)
                         isin = np.isin(nodes[i + 1 :], neighbors)
-                        if not np.alltrue(isin):
+                        if not np.all(isin):
                             mask[ix] = True
 
             if ismasked is not None:
@@ -296,8 +319,7 @@ class PlotMapView:
             if plot_triplot:
                 ax.triplot(triang, color="black", marker="o", lw=0.75)
 
-        ax.set_xlim(self.extent[0], self.extent[1])
-        ax.set_ylim(self.extent[2], self.extent[3])
+        ax = self._set_axes_limits(ax)
 
         return contour_set
 
@@ -414,8 +436,7 @@ class PlotMapView:
         collection = LineCollection(grid_lines, colors=colors, **kwargs)
 
         ax.add_collection(collection)
-        ax.set_xlim(self.extent[0], self.extent[1])
-        ax.set_ylim(self.extent[2], self.extent[3])
+        ax = self._set_axes_limits(ax)
         return collection
 
     def plot_bc(
@@ -425,6 +446,7 @@ class PlotMapView:
         kper=0,
         color=None,
         plotAll=False,
+        boundname=None,
         **kwargs,
     ):
         """
@@ -481,15 +503,12 @@ class PlotMapView:
                     try:
                         mflist = pp.stress_period_data.array[kper]
                     except Exception as e:
-                        raise Exception(
-                            f"Not a list-style boundary package: {e!s}"
-                        )
+                        raise Exception(f"Not a list-style boundary package: {e!s}")
                     if mflist is None:
                         return
-
-                    t = np.array(
-                        [list(i) for i in mflist["cellid"]], dtype=int
-                    ).T
+                    if boundname is not None:
+                        mflist = mflist[mflist["boundname"] == boundname]
+                    t = np.array([list(i) for i in mflist["cellid"]], dtype=int).T
 
                 if len(idx) == 0:
                     idx = np.copy(t)
@@ -504,9 +523,7 @@ class PlotMapView:
                 try:
                     mflist = p.stress_period_data[kper]
                 except Exception as e:
-                    raise Exception(
-                        f"Not a list-style boundary package: {e!s}"
-                    )
+                    raise Exception(f"Not a list-style boundary package: {e!s}")
                 if mflist is None:
                     return
                 if len(self.mg.shape) == 3:
@@ -596,7 +613,67 @@ class PlotMapView:
         """
         ax = kwargs.pop("ax", self.ax)
         patch_collection = plotutil.plot_shapefile(obj, ax, **kwargs)
+        ax = self._set_axes_limits(ax)
         return patch_collection
+
+    def plot_centers(
+        self, a=None, s=None, masked_values=None, inactive=False, **kwargs
+    ):
+        """
+        Method to plot cell centers on cross-section using matplotlib
+        scatter. This method accepts an optional data array(s) for
+        coloring and scaling the cell centers. Cell centers in inactive
+        nodes are not plotted by default
+
+        Parameters
+        ----------
+        a : None, np.ndarray
+            optional numpy nd.array of size modelgrid.nnodes
+        s : None, float, numpy array
+            optional point size parameter
+        masked_values : None, iterable
+            optional list, tuple, or np array of array (a) values to mask
+        inactive : bool
+            boolean flag to include inactive cell centers in the plot.
+            Default is False
+        **kwargs :
+            matplotlib ax.scatter() keyword arguments
+
+        Returns
+        -------
+            matplotlib ax.scatter() object
+        """
+        ax = kwargs.pop("ax", self.ax)
+
+        xcenters = self.mg.get_xcellcenters_for_layer(self.layer).ravel()
+        ycenters = self.mg.get_ycellcenters_for_layer(self.layer).ravel()
+        idomain = self.mg.get_plottable_layer_array(self.mg.idomain, self.layer).ravel()
+
+        active_ixs = list(range(len(xcenters)))
+        if not inactive:
+            active_ixs = np.where(idomain != 0)[0]
+
+        xcenters = xcenters[active_ixs]
+        ycenters = ycenters[active_ixs]
+
+        if a is not None:
+            a = self.mg.get_plottable_layer_array(a).ravel()
+
+            if masked_values is not None:
+                self._masked_values.extend(list(masked_values))
+
+            for mval in self._masked_values:
+                a[a == mval] = np.nan
+
+            a = a[active_ixs]
+
+        if s is not None:
+            if not isinstance(s, (int, float)):
+                s = self.mg.get_plottable_layer_array(s).ravel()
+                s = s[active_ixs]
+
+        scat = ax.scatter(xcenters, ycenters, c=a, s=s, **kwargs)
+        return scat
 
     def plot_vector(
         self,
@@ -692,11 +769,13 @@ class PlotMapView:
         # these are vectors not locations
         urot, vrot = geometry.rotate(u, v, 0.0, 0.0, self.mg.angrot_radians)
         quiver = ax.quiver(x, y, urot, vrot, pivot=pivot, **kwargs)
+        ax = self._set_axes_limits(ax)
         return quiver
 
     def plot_pathline(self, pl, travel_time=None, **kwargs):
         """
-        Plot MODPATH pathlines.
+        Plot particle pathlines. Compatible with MODFLOW 6 PRT particle track
+        data format, or MODPATH 6 or 7 pathline data format.
 
         Parameters
         ----------
@@ -704,11 +783,18 @@ class PlotMapView:
             Particle pathline data. If a list of recarrays or dataframes,
             each must contain the path of only a single particle. If just
             one recarray or dataframe, it should contain the paths of all
-            particles. Pathline data returned from PathlineFile.get_data()
-            or get_alldata() can be passed directly as this argument. Data
-            columns should be 'x', 'y', 'z', 'time', 'k', and 'particleid'
-            at minimum. Additional columns are ignored. The 'particleid'
-            column must be unique to each particle path.
+            particles. The flopy.utils.modpathfile.PathlineFile.get_data()
+            or get_alldata() return value may be passed directly as this
+            argument.
+
+            For MODPATH 6 or 7 pathlines, columns must include 'x', 'y', 'z',
+            'time', 'k', and 'particleid'. Additional columns are ignored.
+
+            For MODFLOW 6 PRT pathlines, columns must include 'x', 'y', 'z',
+            't', 'trelease', 'imdl', 'iprp', 'irpt', and 'ilay'. Additional
+            columns are ignored. Note that MODFLOW 6 PRT does not assign to
+            particles a unique ID, but infers particle identity from 'imdl',
+            'iprp', 'irpt', and 'trelease' combos (i.e. via composite key).
         travel_time : float or str
             Travel time selection. If a float, then pathlines with total
             time less than or equal to the given value are plotted. If a
@@ -729,19 +815,29 @@ class PlotMapView:
 
         from matplotlib.collections import LineCollection
 
-        # make sure pathlines is a list
+        # make sure pl is a list
         if not isinstance(pl, list):
-            pids = np.unique(pl["particleid"])
-            if len(pids) > 1:
-                pl = [pl[pl["particleid"] == pid] for pid in pids]
-            else:
-                pl = [pl]
+            if not isinstance(pl, (np.ndarray, pd.DataFrame)):
+                raise TypeError(
+                    "Pathline data must be a list of recarrays or dataframes, "
+                    f"or a single recarray or dataframe, got {type(pl)}"
+                )
+            pl = [pl]
 
+        # convert prt to mp7 format
         pl = [
-            p.to_records(index=False) if isinstance(p, pd.DataFrame) else p
+            to_mp7_pathlines(
+                p.to_records(index=False) if isinstance(p, pd.DataFrame) else p
+            )
             for p in pl
         ]
 
+        # merge pathlines then split on particleid
+        pls = stack_arrays(pl, asrecarray=True, usemask=False)
+        pids = np.unique(pls["particleid"])
+        pl = [pls[pls["particleid"] == pid] for pid in pids]
+
+        # configure layer
         if "layer" in kwargs:
             kon = kwargs.pop("layer")
             if isinstance(kon, bytes):
@@ -752,21 +848,23 @@ class PlotMapView:
                 else:
                     kon = self.layer
         else:
-            kon = self.layer
+            kon = -1
 
+        # configure plot settings
         marker = kwargs.pop("marker", None)
         markersize = kwargs.pop("markersize", None)
         markersize = kwargs.pop("ms", markersize)
         markercolor = kwargs.pop("markercolor", None)
         markerevery = kwargs.pop("markerevery", 1)
         ax = kwargs.pop("ax", self.ax)
-
         if "colors" not in kwargs:
             kwargs["colors"] = "0.5"
 
+        # compose pathlines
         linecol = []
         markers = []
         for p in pl:
+            # filter by travel time
             tp = plotutil.filter_modpath_by_travel_time(p, travel_time)
 
             # transform data!
@@ -777,8 +875,10 @@ class PlotMapView:
                 self.mg.yoffset,
                 self.mg.angrot_radians,
             )
+
             # build polyline array
             arr = np.vstack((x0r, y0r)).T
+
             # select based on layer
             if kon >= 0:
                 kk = p["k"].copy().reshape(p.shape[0], 1)
@@ -786,7 +886,8 @@ class PlotMapView:
                 arr = np.ma.masked_where((kk != kon), arr)
             else:
                 arr = np.ma.asarray(arr)
-            # append line to linecol if there is some unmasked segment
+
+            # append pathline if there are any unmasked segments
             if not arr.mask.all():
                 linecol.append(arr)
                 if not arr.mask.all():
@@ -795,6 +896,7 @@ class PlotMapView:
                         for xy in arr[::markerevery]:
                             if not np.all(xy.mask):
                                 markers.append(xy)
+
         # create line collection
         lc = None
         if len(linecol) > 0:
@@ -811,13 +913,13 @@ class PlotMapView:
                     ms=markersize,
                 )
 
-        ax.set_xlim(self.extent[0], self.extent[1])
-        ax.set_ylim(self.extent[2], self.extent[3])
+        # set axis limits
+        ax = self._set_axes_limits(ax)
         return lc
 
     def plot_timeseries(self, ts, travel_time=None, **kwargs):
         """
-        Plot MODPATH timeseries.
+        Plot MODPATH 6 or 7 timeseries. Incompatible with MODFLOW 6 PRT.
 
         Parameters
         ----------
@@ -861,13 +963,20 @@ class PlotMapView:
         **kwargs,
     ):
         """
-        Plot MODPATH endpoints.
+        Plot particle endpoints. Compatible with MODFLOW 6 PRT particle
+        track data format, or MODPATH 6 or 7 endpoint data format.
 
         Parameters
         ----------
         ep : recarray or dataframe
             A numpy recarray with the endpoint particle data from the
-            MODPATH endpoint file
+            MODPATH endpoint file.
+
+            For MODFLOW 6 PRT pathlines, columns must include 'x', 'y', 'z',
+            't', 'trelease', 'imdl', 'iprp', 'irpt', and 'ilay'. Additional
+            columns are ignored. Note that MODFLOW 6 PRT does not assign to
+            particles a unique ID, but infers particle identity from 'imdl',
+            'iprp', 'irpt', and 'trelease' combos (i.e. via composite key).
         direction : str
             String defining if starting or ending particle locations should be
             considered. (default is 'ending')
@@ -898,6 +1007,17 @@ class PlotMapView:
 
         """
 
+        # convert ep to recarray if needed
+        if isinstance(ep, pd.DataFrame):
+            ep = ep.to_records(index=False)
+
+        # convert ep from prt to mp7 format if needed
+        if "t" in ep.dtype.names:
+            from .plotutil import to_mp7_endpoints
+
+            ep = to_mp7_endpoints(ep)
+
+        # parse selection options
         ax = kwargs.pop("ax", self.ax)
         tep, _, xp, yp = plotutil.parse_modpath_selection_options(
             ep, direction, selection, selection_direction
@@ -914,11 +1034,7 @@ class PlotMapView:
 
         # transform data!
         x0r, y0r = geometry.transform(
-            tep[xp],
-            tep[yp],
-            self.mg.xoffset,
-            self.mg.yoffset,
-            self.mg.angrot_radians,
+            tep[xp], tep[yp], self.mg.xoffset, self.mg.yoffset, self.mg.angrot_radians
         )
         # build array to plot
         arr = np.vstack((x0r, y0r)).T
@@ -936,4 +1052,6 @@ class PlotMapView:
         if createcb:
             cb = plt.colorbar(sp, ax=ax, shrink=shrink)
             cb.set_label(colorbar_label)
+
+        ax = self._set_axes_limits(ax)
         return sp

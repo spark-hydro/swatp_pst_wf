@@ -6,6 +6,13 @@ from collections import defaultdict
 
 import numpy as np
 
+try:
+    import pyproj
+
+    HAS_PYPROJ = True
+except ImportError:
+    HAS_PYPROJ = False
+
 from ..utils import geometry
 from ..utils.crs import get_crs
 from ..utils.gridutil import get_lni
@@ -106,26 +113,12 @@ class Grid:
         rotation angle of model grid, as it is rotated around the origin point
     angrot_radians : float
         rotation angle of model grid, in radians
-    xgrid : ndarray
-        returns numpy meshgrid of x edges in reference frame defined by
-        point_type
-    ygrid : ndarray
-        returns numpy meshgrid of y edges in reference frame defined by
-        point_type
-    zgrid : ndarray
-        returns numpy meshgrid of z edges in reference frame defined by
-        point_type
     xcenters : ndarray
         returns x coordinate of cell centers
     ycenters : ndarray
         returns y coordinate of cell centers
     ycenters : ndarray
         returns z coordinate of cell centers
-    xyzgrid : [ndarray, ndarray, ndarray]
-        returns the location of grid edges of all model cells. if the model
-        grid contains spatial reference information, the grid edges are in the
-        coordinate system provided by the spatial reference information.
-        returns a list of three ndarrays for the x, y, and z coordinates
     xyzcellcenters : [ndarray, ndarray, ndarray]
         returns the cell centers of all model cells in the model grid.  if
         the model grid contains spatial reference information, the cell centers
@@ -135,7 +128,7 @@ class Grid:
         ndarrays for the x, y, and z coordinates
 
     Methods
-    ----------
+    -------
     get_coords(x, y)
         transform point or array of points x, y from model coordinates to
         spatial coordinates
@@ -143,10 +136,6 @@ class Grid:
         returns the model grid lines in a list.  each line is returned as a
         list containing two tuples in the format [(x1,y1), (x2,y2)] where
         x1,y1 and x2,y2 are the endpoints of the line.
-    xyvertices : (point_type) : ndarray
-        1D array of x and y coordinates of cell vertices for whole grid
-        (single layer) in C-style (row-major) order
-        (same as np.ravel())
 
     See Also
     --------
@@ -204,15 +193,15 @@ class Grid:
             raise TypeError(f"unhandled keywords: {kwargs}")
         if prjfile is not None:
             self.prjfile = prjfile
-        try:
+        if HAS_PYPROJ:
             self._crs = get_crs(**get_crs_args)
-        except ImportError:
-            # provide some support without pyproj by retaining 'epsg' integer
-            if getattr(self, "_epsg", None) is None:
-                epsg = _get_epsg_from_crs_or_proj4(crs, self.proj4)
-                if epsg is not None:
-                    self.epsg = epsg
-
+        elif crs is not None:
+            # provide some support without pyproj
+            if isinstance(crs, str) and self.proj4 is None:
+                self._proj4 = crs
+            if self.epsg is None:
+                if epsg := _get_epsg_from_crs_or_proj4(crs, self.proj4):
+                    self._epsg = epsg
         self._prjfile = prjfile
         self._xoff = xoff
         self._yoff = yoff
@@ -304,9 +293,9 @@ class Grid:
         if crs is None:
             self._crs = None
             return
-        try:
+        if HAS_PYPROJ:
             self._crs = get_crs(crs=crs)
-        except ImportError:
+        else:
             warnings.warn(
                 "cannot set 'crs' property without pyproj; "
                 "try setting 'epsg' or 'proj4' instead",
@@ -336,11 +325,8 @@ class Grid:
             raise ValueError("epsg property must be an int or None")
         self._epsg = epsg
         # If crs was previously unset, use EPSG code
-        if self._crs is None and epsg is not None:
-            try:
-                self._crs = get_crs(crs=epsg)
-            except ImportError:
-                pass
+        if HAS_PYPROJ and self._crs is None and epsg is not None:
+            self._crs = get_crs(crs=epsg)
 
     @property
     def proj4(self):
@@ -364,11 +350,8 @@ class Grid:
             raise ValueError("proj4 property must be a str or None")
         self._proj4 = proj4
         # If crs was previously unset, use lossy PROJ string
-        if self._crs is None and proj4 is not None:
-            try:
-                self._crs = get_crs(crs=proj4)
-            except ImportError:
-                pass
+        if HAS_PYPROJ and self._crs is None and proj4 is not None:
+            self._crs = get_crs(crs=proj4)
 
     @property
     def prj(self):
@@ -402,10 +385,10 @@ class Grid:
             raise ValueError("prjfile property must be str, PathLike or None")
         self._prjfile = prjfile
         # If crs was previously unset, use .prj file input
-        if self._crs is None:
+        if HAS_PYPROJ and self._crs is None:
             try:
                 self._crs = get_crs(prjfile=prjfile)
-            except (ImportError, FileNotFoundError):
+            except FileNotFoundError:
                 pass
 
     @property
@@ -442,9 +425,7 @@ class Grid:
     def thick(self):
         """Raises AttributeError, use :meth:`cell_thickness`."""
         # DEPRECATED since version 3.4.0
-        raise AttributeError(
-            "'thick' has been removed; use 'cell_thickness()'"
-        )
+        raise AttributeError("'thick' has been removed; use 'cell_thickness()'")
 
     def saturated_thickness(self, array, mask=None):
         """
@@ -472,15 +453,15 @@ class Grid:
         bot = self.remove_confining_beds(bot)
         array = self.remove_confining_beds(array)
 
-        idx = np.where((array < top) & (array > bot))
+        idx = np.asarray((array < top) & (array > bot)).nonzero()
         thickness[idx] = array[idx] - bot[idx]
-        idx = np.where(array <= bot)
+        idx = np.asarray(array <= bot).nonzero()
         thickness[idx] = 0.0
         if mask is not None:
             if isinstance(mask, (float, int)):
                 mask = [float(mask)]
             for mask_value in mask:
-                thickness[np.where(array == mask_value)] = np.nan
+                thickness[np.asarray(array == mask_value).nonzero()] = np.nan
         return thickness
 
     def saturated_thick(self, array, mask=None):
@@ -580,8 +561,7 @@ class Grid:
     @property
     def xyzcellcenters(self):
         raise NotImplementedError(
-            "must define get_cellcenters in child "
-            "class to use this base class"
+            "must define get_cellcenters in child class to use this base class"
         )
 
     @property
@@ -608,14 +588,42 @@ class Grid:
     def xyzvertices(self):
         raise NotImplementedError("must define xyzvertices in child class")
 
-    # @property
-    # def indices(self):
-    #    raise NotImplementedError(
-    #        'must define indices in child '
-    #        'class to use this base class')
     @property
     def cross_section_vertices(self):
         return self.xyzvertices[0], self.xyzvertices[1]
+
+    def geo_dataframe(self, features, featuretype="Polygon"):
+        """
+        Method returns a geopandas GeoDataFrame of the Grid
+
+        Returns
+        -------
+            GeoDataFrame
+        """
+        from ..utils.geospatial_utils import GeoSpatialCollection
+
+        gc = GeoSpatialCollection(
+            features, shapetype=[featuretype for _ in range(len(features))]
+        )
+        gdf = gc.geo_dataframe
+        if self.crs is not None:
+            gdf = gdf.set_crs(crs=self.crs)
+
+        return gdf
+
+    def convert_grid(self, factor):
+        """
+        Method to scale the model grid based on user supplied scale factors
+
+        Parameters
+        ----------
+        factor
+
+        Returns
+        -------
+            Grid object
+        """
+        raise NotImplementedError("convert_grid must be defined in the child class")
 
     def _set_neighbors(self, reset=False, method="rook"):
         """
@@ -634,8 +642,8 @@ class Grid:
         """
         if self._neighbors is None or reset:
             node_num = 0
-            neighbors = {i: list() for i in range(len(self.iverts))}
-            edge_set = {i: list() for i in range(len(self.iverts))}
+            neighbors = {i: [] for i in range(len(self.iverts))}
+            edge_set = {i: [] for i in range(len(self.iverts))}
             geoms = []
             node_nums = []
             if method == "rook":
@@ -673,9 +681,7 @@ class Grid:
                             pass
 
             # convert use dict to create a set that preserves insertion order
-            self._neighbors = {
-                i: list(dict.fromkeys(v)) for i, v in neighbors.items()
-            }
+            self._neighbors = {i: list(dict.fromkeys(v)) for i, v in neighbors.items()}
             self._edge_set = edge_set
 
     def neighbors(self, node=None, **kwargs):
@@ -785,7 +791,7 @@ class Grid:
 
     def cross_section_adjust_indicies(self, k, cbcnt):
         """
-        Method to get adjusted indicies by layer and confining bed
+        Method to get adjusted indices by layer and confining bed
         for PlotCrossSection plotting
 
         Parameters
@@ -808,8 +814,8 @@ class Grid:
         self, plotarray, xcenters, head, elev, projpts
     ):
         """
-        Method to set countour array centers for rare instances where
-        matplotlib contouring is prefered over trimesh plotting
+        Method to set contour array centers for rare instances where
+        matplotlib contouring is preferred over trimesh plotting
 
         Parameters
         ----------
@@ -865,7 +871,7 @@ class Grid:
 
     def get_lni(self, nodes):
         """
-        Get the layer index and within-layer node index (both 0-based) for the given nodes
+        Get the 0-based layer index and within-layer node index for the given nodes
 
         Parameters
         ----------
@@ -926,9 +932,7 @@ class Grid:
 
         x += self._xoff
         y += self._yoff
-        return geometry.rotate(
-            x, y, self._xoff, self._yoff, self.angrot_radians
-        )
+        return geometry.rotate(x, y, self._xoff, self._yoff, self.angrot_radians)
 
     def get_local_coords(self, x, y):
         """
@@ -944,8 +948,6 @@ class Grid:
         x, y = geometry.transform(
             x, y, self._xoff, self._yoff, self.angrot_radians, inverse=True
         )
-        # x -= self._xoff
-        # y -= self._yoff
 
         return x, y
 
@@ -1012,9 +1014,9 @@ class Grid:
             self.proj4 = get_crs_args["proj4"] = kwargs.pop("proj4")
         if kwargs:
             raise TypeError(f"unhandled keywords: {kwargs}")
-        try:
+        if HAS_PYPROJ:
             new_crs = get_crs(**get_crs_args)
-        except ImportError:
+        else:
             new_crs = None
             # provide some support without pyproj by retaining 'epsg' integer
             if getattr(self, "_epsg", None) is None:
@@ -1192,14 +1194,6 @@ class Grid:
         else:
             return yul - (np.cos(self.angrot_radians) * yext)
 
-    def _set_sr_coord_info(self, sr):
-        self._xoff = sr.xll
-        self._yoff = sr.yll
-        self._angrot = sr.rotation
-        self._epsg = sr.epsg
-        self._proj4 = sr.proj4_str
-        self._require_cache_updates()
-
     def _require_cache_updates(self):
         for cache_data in self._cache_dict.values():
             cache_data.out_of_date = True
@@ -1215,9 +1209,7 @@ class Grid:
         if self.top is not None and self.botm is not None:
             zcenters = []
             top_3d = np.expand_dims(self.top, 0)
-            zbdryelevs = np.concatenate(
-                (top_3d, np.atleast_2d(self.botm)), axis=0
-            )
+            zbdryelevs = np.concatenate((top_3d, np.atleast_2d(self.botm)), axis=0)
 
             for ix in range(1, len(zbdryelevs)):
                 zcenters.append((zbdryelevs[ix - 1] + zbdryelevs[ix]) / 2.0)
@@ -1227,9 +1219,7 @@ class Grid:
         return zbdryelevs, zcenters
 
     # Exporting
-    def write_shapefile(
-        self, filename="grid.shp", crs=None, prjfile=None, **kwargs
-    ):
+    def write_shapefile(self, filename="grid.shp", crs=None, prjfile=None, **kwargs):
         """
         Write a shapefile of the grid with just the row and column attributes.
 
@@ -1259,6 +1249,4 @@ class Grid:
     # initialize grid from a grb file
     @classmethod
     def from_binary_grid_file(cls, file_path, verbose=False):
-        raise NotImplementedError(
-            "must define from_binary_grid_file in child class"
-        )
+        raise NotImplementedError("must define from_binary_grid_file in child class")

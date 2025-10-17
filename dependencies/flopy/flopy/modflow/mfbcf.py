@@ -14,10 +14,9 @@ class ModflowBcf(Package):
     model : model object
         The model object (of type :class:`flopy.modflow.Modflow`) to which
         this package will be added.
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is 53)
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
     intercellt : int
         Intercell transmissivities, harmonic mean (0), arithmetic mean (1),
         logarithmic mean (2), combination (3). (default is 0)
@@ -46,7 +45,7 @@ class ModflowBcf(Package):
     vcont : float or array of floats (nlay-1, nrow, ncol)
         vertical leakance between layers (default is 1.0)
     sf1 : float or array of floats (nlay, nrow, ncol)
-        specific storage (confined) or storage coefficient (unconfined),
+        specific storage (confined) or specific yield (unconfined),
         read when there is at least one transient stress period.
         (default is 1e-5)
     sf2 : float or array of floats (nrow, ncol)
@@ -64,9 +63,9 @@ class ModflowBcf(Package):
         filenames=None the package name will be created using the model name
         and package extension and the cbc output name will be created using
         the model name and .cbc extension (for example, modflowtest.cbc),
-        if ipakcbc is a number greater than zero. If a single string is passed
+        if ipakcb is a number greater than zero. If a single string is passed
         the package will be set to the string and cbc output name will be
-        created using the model name and .cbc extension, if ipakcbc is a
+        created using the model name and .cbc extension, if ipakcb is a
         number greater than zero. To define the names for all package files
         (input and output) the length of the list of strings should be 2.
         Default is None.
@@ -121,13 +120,8 @@ class ModflowBcf(Package):
         # set filenames
         filenames = self._prepare_filenames(filenames, 2)
 
-        # update external file information with cbc output, if necessary
-        if ipakcb is not None:
-            model.add_output_file(
-                ipakcb, fname=filenames[1], package=self._ftype()
-            )
-        else:
-            ipakcb = 0
+        # cbc output file
+        self.set_cbc_output_file(ipakcb, model, filenames[1])
 
         # call base package constructor
         super().__init__(
@@ -151,12 +145,7 @@ class ModflowBcf(Package):
             locat=self.unit_number[0],
         )
         self.laycon = Util2d(
-            model,
-            (nlay,),
-            np.int32,
-            laycon,
-            name="laycon",
-            locat=self.unit_number[0],
+            model, (nlay,), np.int32, laycon, name="laycon", locat=self.unit_number[0]
         )
         self.trpy = Util2d(
             model,
@@ -168,7 +157,6 @@ class ModflowBcf(Package):
         )
 
         # item 1
-        self.ipakcb = ipakcb
         self.hdry = hdry
         self.iwdflg = iwdflg
         self.wetfct = wetfct
@@ -279,7 +267,7 @@ class ModflowBcf(Package):
         f_bcf.write(self.trpy.get_file_entry())
         transient = not dis.steady.all()
         for k in range(nlay):
-            if transient == True:
+            if transient:
                 f_bcf.write(self.sf1[k].get_file_entry())
             if (self.laycon[k] == 0) or (self.laycon[k] == 2):
                 f_bcf.write(self.tran[k].get_file_entry())
@@ -287,13 +275,9 @@ class ModflowBcf(Package):
                 f_bcf.write(self.hy[k].get_file_entry())
             if k < nlay - 1:
                 f_bcf.write(self.vcont[k].get_file_entry())
-            if (transient == True) and (
-                (self.laycon[k] == 2) or (self.laycon[k] == 3)
-            ):
+            if transient and ((self.laycon[k] == 2) or (self.laycon[k] == 3)):
                 f_bcf.write(self.sf2[k].get_file_entry())
-            if (self.iwdflg != 0) and (
-                (self.laycon[k] == 1) or (self.laycon[k] == 3)
-            ):
+            if (self.iwdflg != 0) and ((self.laycon[k] == 1) or (self.laycon[k] == 3)):
                 f_bcf.write(self.wetdry[k].get_file_entry())
         f_bcf.close()
 
@@ -411,9 +395,7 @@ class ModflowBcf(Package):
         # TRPY array
         if model.verbose:
             print("   loading TRPY...")
-        trpy = Util2d.load(
-            f, model, (nlay,), np.float32, "trpy", ext_unit_dict
-        )
+        trpy = Util2d.load(f, model, (nlay,), np.float32, "trpy", ext_unit_dict)
 
         # property data for each layer based on options
         transient = not dis.steady.all()
@@ -456,9 +438,7 @@ class ModflowBcf(Package):
             else:
                 if model.verbose:
                     print(f"   loading hy layer {k + 1:3d}...")
-                t = Util2d.load(
-                    f, model, (nrow, ncol), np.float32, "hy", ext_unit_dict
-                )
+                t = Util2d.load(f, model, (nrow, ncol), np.float32, "hy", ext_unit_dict)
                 hy[k] = t
 
             # vcont
@@ -499,9 +479,7 @@ class ModflowBcf(Package):
                 ext_unit_dict, filetype=ModflowBcf._ftype()
             )
             if ipakcb > 0:
-                iu, filenames[1] = model.get_ext_dict_attr(
-                    ext_unit_dict, unit=ipakcb
-                )
+                iu, filenames[1] = model.get_ext_dict_attr(ext_unit_dict, unit=ipakcb)
                 model.add_pop_key_list(ipakcb)
 
         # create instance of bcf object

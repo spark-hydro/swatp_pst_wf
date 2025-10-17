@@ -2,13 +2,20 @@ import os
 import shutil
 import tempfile
 import time
-
-from .createpackages import create_packages
+from pathlib import Path
+from warnings import warn
 
 thisfilepath = os.path.dirname(os.path.abspath(__file__))
 flopypth = os.path.join(thisfilepath, "..", "..")
 flopypth = os.path.abspath(flopypth)
 protected_dfns = ["flopy.dfn"]
+default_owner = "MODFLOW-ORG"
+default_repo = "modflow6"
+
+_MF6_PATH = Path(__file__).parents[1]
+_DFN_PATH = _MF6_PATH / "data" / "dfn"
+_TOML_PATH = _DFN_PATH / "toml"
+_TGT_PATH = _MF6_PATH / "modflow"
 
 
 def delete_files(files, pth, allow_failure=False, exclude=None):
@@ -47,25 +54,28 @@ def list_files(pth, exts=["py"]):
             print(f"    {idx:5d} - {fn}")
 
 
-def download_dfn(owner, branch, new_dfn_pth):
+def download_dfn(owner, repo, ref, new_dfn_pth):
     try:
         from modflow_devtools.download import download_and_unzip
-    except:
-        msg = (
-            "Error.  The modflow-devtools package must be installed in order to "
-            "generate the MODFLOW 6 classes. modflow-devtools can be installed using "
-            "pip install modflow-devtools.  Stopping."
+    except ImportError:
+        raise ImportError(
+            "The modflow-devtools package must be installed in order to "
+            "generate the MODFLOW 6 classes. This can be with:\n"
+            "     pip install modflow-devtools"
         )
-        print(msg)
 
-    mf6url = "https://github.com/{}/modflow6/archive/{}.zip"
-    mf6url = mf6url.format(owner, branch)
+    mf6url = f"https://github.com/{owner}/{repo}/archive/{ref}.zip"
     print(f"  Downloading MODFLOW 6 repository from {mf6url}")
     with tempfile.TemporaryDirectory() as tmpdirname:
-        download_and_unzip(mf6url, tmpdirname, verbose=True)
-        downloaded_dfn_pth = os.path.join(tmpdirname, f"modflow6-{branch}")
+        dl_path = download_and_unzip(mf6url, tmpdirname, verbose=True)
+        dl_contents = list(dl_path.glob("modflow6-*"))
+        proj_path = next(iter(dl_contents), None)
+        if not proj_path:
+            raise ValueError(
+                f"Could not find modflow6 project dir in {dl_path}: found {dl_contents}"
+            )
         downloaded_dfn_pth = os.path.join(
-            downloaded_dfn_pth, "doc", "mf6io", "mf6ivar", "dfn"
+            proj_path, "doc", "mf6io", "mf6ivar", "dfn"
         )
         shutil.copytree(downloaded_dfn_pth, new_dfn_pth)
 
@@ -80,7 +90,7 @@ def backup_existing_dfns(flopy_dfn_path):
     ), f"dfn backup files not found: {backup_folder}"
 
 
-def replace_dfn_files(new_dfn_pth, flopy_dfn_path):
+def replace_dfn_files(new_dfn_pth, flopy_dfn_path, exclude):
     # remove the old files, unless the file is protected
     filenames = os.listdir(flopy_dfn_path)
     delete_files(filenames, flopy_dfn_path, exclude=protected_dfns)
@@ -88,6 +98,9 @@ def replace_dfn_files(new_dfn_pth, flopy_dfn_path):
     # copy the new ones into the folder
     filenames = os.listdir(new_dfn_pth)
     for filename in filenames:
+        if exclude and any(pattern in filename for pattern in exclude):
+            print(f"  excluding..{filename}")
+            continue
         filename_w_path = os.path.join(new_dfn_pth, filename)
         print(f"  copying..{filename}")
         shutil.copy(filename_w_path, flopy_dfn_path)
@@ -104,7 +117,13 @@ def delete_mf6_classes():
 
 
 def generate_classes(
-    owner="MODFLOW-USGS", branch="master", dfnpath=None, backup=True
+    owner=default_owner,
+    repo=default_repo,
+    branch=None,
+    ref="master",
+    dfnpath=None,
+    backup=True,
+    exclude=None
 ):
     """
     Generate the MODFLOW 6 flopy classes using definition files from the
@@ -113,38 +132,53 @@ def generate_classes(
 
     Parameters
     ----------
-    owner : str
+    owner : str, default "MODFLOW-ORG"
         Owner of the MODFLOW 6 repository to use to update the definition
-        files and generate the MODFLOW 6 classes. Default is MODFLOW-USGS.
-    branch : str
+        files and generate the MODFLOW 6 classes.
+    repo : str, default "modflow6"
+        Name of the MODFLOW 6 repository to use to update the definition.
+    branch : str, optional
         Branch name of the MODFLOW 6 repository to use to update the
-        definition files and generate the MODFLOW 6 classes. Default is master.
+        definition files and generate the MODFLOW 6 classes.
+
+        .. deprecated:: 3.5.0
+            Use ref instead.
+    ref : str, default "master"
+        Branch name, tag, or commit hash to use to update the definition.
     dfnpath : str
         Path to a definition file folder that will be used to generate the
         MODFLOW 6 classes.  Default is none, which means that the branch
         will be used instead.  dfnpath will take precedence over branch
         if dfnpath is specified.
-    backup : bool
+    backup : bool, default True
         Keep a backup of the definition files in dfn_backup with a date and
-        time stamp from when the definition files were replaced.
-
+        timestamp from when the definition files were replaced.
+    exclude : list of str, optional, default None
+        Patterns for excluding DFN files and corresponding components.
     """
 
     # print header
     print(2 * "\n")
     print(72 * "*")
     print("Updating the flopy MODFLOW 6 classes")
-    flopy_dfn_path = os.path.join(flopypth, "mf6", "data", "dfn")
+    flopy_dfn_path = (Path(flopypth) / "mf6" / "data" / "dfn").expanduser().absolute()
 
     # download the dfn files and put them in flopy.mf6.data or update using
     # user provided dfnpath
     if dfnpath is None:
-        print(
-            f"  Updating the MODFLOW 6 classes using {owner}/modflow6/{branch}"
-        )
         timestr = time.strftime("%Y%m%d-%H%M%S")
         new_dfn_pth = os.path.join(flopypth, "mf6", "data", f"dfn_{timestr}")
-        download_dfn(owner, branch, new_dfn_pth)
+
+        # branch deprecated 3.5.0
+        if not ref and not branch:
+            raise ValueError("branch or ref must be provided")
+        if branch:
+            warn("branch is deprecated, use ref instead", DeprecationWarning)
+            ref = branch
+
+        print(f"  Updating the MODFLOW 6 classes using {owner}/{repo}/{ref}")
+
+        download_dfn(owner, repo, ref, new_dfn_pth)
     else:
         print(f"  Updating the MODFLOW 6 classes using {dfnpath}")
         assert os.path.isdir(dfnpath)
@@ -154,14 +188,85 @@ def generate_classes(
         print(f"  Backup existing definition files in: {flopy_dfn_path}")
         backup_existing_dfns(flopy_dfn_path)
 
-    print("  Replacing existing definition files with new ones.")
-    replace_dfn_files(new_dfn_pth, flopy_dfn_path)
-    if dfnpath is None:
-        shutil.rmtree(new_dfn_pth)
+    new_dfn_path = Path(new_dfn_pth).expanduser().absolute()
 
-    print("  Deleting existing mf6 classes.")
+    if (new_dfn_path == flopy_dfn_path):
+        print("  Using pre-existing definition files")
+    else:
+        print("  Replacing existing definition files")
+        replace_dfn_files(new_dfn_pth, flopy_dfn_path, exclude)
+        if dfnpath is None:
+            shutil.rmtree(new_dfn_pth)
+
+    print("  Deleting existing mf6 classes")
     delete_mf6_classes()
 
-    print("  Create mf6 classes using the downloaded definition files.")
-    create_packages()
+    # convert dfns to toml.. when we
+    # do this upstream, remove this.
+    _TOML_PATH.mkdir(exist_ok=True)
+    from flopy.mf6.utils.dfn2toml import convert as dfn2toml
+    dfn2toml(_DFN_PATH, _TOML_PATH)
+
+    print("  Create mf6 classes using the definition files.")
+    from flopy.mf6.utils.codegen import make_all
+    make_all(_TOML_PATH, _TGT_PATH, version=2)
     list_files(os.path.join(flopypth, "mf6", "modflow"))
+
+
+def cli_main():
+    """Command-line interface for generate_classes()."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description=generate_classes.__doc__.split("\n\n")[0],
+    )
+
+    parser.add_argument(
+        "--owner",
+        type=str,
+        default=default_owner,
+        help=f"GitHub repository owner; default is '{default_owner}'.",
+    )
+    parser.add_argument(
+        "--repo",
+        default=default_repo,
+        help=f"Name of GitHub repository; default is '{default_repo}'.",
+    )
+    parser.add_argument(
+        "--ref",
+        default="master",
+        help="Branch name, tag, or commit hash to use to update the "
+        "definition; default is 'master'.",
+    )
+    parser.add_argument(
+        "--dfnpath",
+        help="Path to a definition file folder that will be used to generate "
+        "the MODFLOW 6 classes.",
+    )
+    parser.add_argument(
+        "--exclude",
+        help="Exclude DFNs matching a pattern.",
+        action="append"
+    )
+    parser.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Set to disable backup. "
+        "Default behavior is to keep a backup of the definition files in "
+        "dfn_backup with a date and timestamp from when the definition "
+        "files were replaced.",
+    )
+
+    args = vars(parser.parse_args())
+    # Handle flipped logic
+    args["backup"] = not args.pop("no_backup")
+    try:
+        generate_classes(**args)
+    except (EOFError, KeyboardInterrupt):
+        sys.exit(f" cancelling '{sys.argv[0]}'")
+
+
+if __name__ == "__main__":
+    """Run command-line with: python -m flopy.mf6.utils.generate_classes"""
+    cli_main()

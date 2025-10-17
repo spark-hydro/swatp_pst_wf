@@ -7,6 +7,7 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow/MODFLOW-2005-Guide/hfb6.html>`_.
 
 """
+
 import numpy as np
 from numpy.lib.recfunctions import stack_arrays
 
@@ -202,9 +203,7 @@ class ModflowHfb(Package):
                     )
                 )
             else:
-                f_hfb.write(
-                    "{:10d}{:10d}{:13.6g}\n".format(a[0] + 1, a[1] + 1, a[2])
-                )
+                f_hfb.write("{:10d}{:10d}{:13.6g}\n".format(a[0] + 1, a[1] + 1, a[2]))
         f_hfb.write(f"{self.nacthfb:10d}")
         f_hfb.close()
 
@@ -312,7 +311,6 @@ class ModflowHfb(Package):
             it = 2
             while it < len(t):
                 toption = t[it]
-                # print it, t[it]
                 if toption.lower() == "noprint":
                     options.append(toption)
                 elif "aux" in toption.lower():
@@ -385,9 +383,7 @@ class ModflowHfb(Package):
                 # fill current parameter data (par_current)
                 for ibnd, t in enumerate(data_dict):
                     t = tuple(t)
-                    par_current[ibnd] = tuple(
-                        t[: len(par_current.dtype.names)]
-                    )
+                    par_current[ibnd] = tuple(t[: len(par_current.dtype.names)])
 
                 # convert indices to zero-based
                 if structured:

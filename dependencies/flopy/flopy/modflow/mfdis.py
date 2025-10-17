@@ -7,6 +7,7 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow/MODFLOW-2005-Guide/dis.html>`_.
 
 """
+
 import warnings
 
 import numpy as np
@@ -15,7 +16,6 @@ from ..pakbase import Package
 from ..utils import Util2d, Util3d
 from ..utils.crs import get_crs
 from ..utils.flopy_io import line_parse
-from ..utils.reference import TemporalReference
 
 ITMUNI = {"u": 0, "s": 1, "m": 2, "h": 3, "d": 4, "y": 5}
 LENUNI = {"u": 0, "f": 1, "m": 2, "c": 3}
@@ -183,9 +183,7 @@ class ModflowDis(Package):
 
         # Set values of all parameters
         self._generate_heading()
-        self.laycbd = Util2d(
-            model, (self.nlay,), np.int32, laycbd, name="laycbd"
-        )
+        self.laycbd = Util2d(model, (self.nlay,), np.int32, laycbd, name="laycbd")
         self.laycbd[-1] = 0  # bottom layer must be zero
         self.delr = Util2d(
             model,
@@ -219,13 +217,9 @@ class ModflowDis(Package):
             "botm",
             locat=self.unit_number[0],
         )
-        self.perlen = Util2d(
-            model, (self.nper,), np.float32, perlen, name="perlen"
-        )
+        self.perlen = Util2d(model, (self.nper,), np.float32, perlen, name="perlen")
         self.nstp = Util2d(model, (self.nper,), np.int32, nstp, name="nstp")
-        self.tsmult = Util2d(
-            model, (self.nper,), np.float32, tsmult, name="tsmult"
-        )
+        self.tsmult = Util2d(model, (self.nper,), np.float32, tsmult, name="tsmult")
         self.steady = Util2d(model, (self.nper,), bool, steady, name="steady")
 
         try:
@@ -278,9 +272,6 @@ class ModflowDis(Package):
 
         if start_datetime is None:
             start_datetime = model._start_datetime
-        self.tr = TemporalReference(
-            itmuni=self.itmuni, start_datetime=start_datetime
-        )
 
         self.start_datetime = start_datetime
         self._totim = None
@@ -395,9 +386,7 @@ class ModflowDis(Package):
                 break
         return kstp, kper, toffset
 
-    def get_totim_from_kper_toffset(
-        self, kper=0, toffset=0.0, use_cached_totim=False
-    ):
+    def get_totim_from_kper_toffset(self, kper=0, toffset=0.0, use_cached_totim=False):
         """
         Get totim from a passed kper and time offset from the beginning
         of a stress period
@@ -424,9 +413,7 @@ class ModflowDis(Package):
         if kper < 0:
             kper = 0.0
         if kper >= self.nper:
-            raise ValueError(
-                f"kper ({kper}) must be less than to nper ({self.nper})."
-            )
+            raise ValueError(f"kper ({kper}) must be less than to nper ({self.nper}).")
 
         totim = self.get_totim(use_cached_totim)
         nstp = self.nstp.array
@@ -611,14 +598,8 @@ class ModflowDis(Package):
         None
 
         """
-        if (
-            check
-        ):  # allows turning off package checks when writing files at model level
-            self.check(
-                f=f"{self.name[0]}.chk",
-                verbose=self.parent.verbose,
-                level=1,
-            )
+        if check:  # allows turning off package checks when writing files at model level
+            self.check(f=f"{self.name[0]}.chk", verbose=self.parent.verbose, level=1)
         # Open file for writing
         f_dis = open(self.fn_path, "w")
         # Item 0: heading
@@ -626,12 +607,7 @@ class ModflowDis(Package):
         # Item 1: NLAY, NROW, NCOL, NPER, ITMUNI, LENUNI
         f_dis.write(
             "{:10d}{:10d}{:10d}{:10d}{:10d}{:10d}\n".format(
-                self.nlay,
-                self.nrow,
-                self.ncol,
-                self.nper,
-                self.itmuni,
-                self.lenuni,
+                self.nlay, self.nrow, self.ncol, self.nper, self.itmuni, self.lenuni
             )
         )
         # Item 2: LAYCBD
@@ -649,9 +625,7 @@ class ModflowDis(Package):
 
         # Item 6: NPER, NSTP, TSMULT, Ss/tr
         for t in range(self.nper):
-            f_dis.write(
-                f"{self.perlen[t]:14f}{self.nstp[t]:14d}{self.tsmult[t]:10f} "
-            )
+            f_dis.write(f"{self.perlen[t]:14f}{self.nstp[t]:14d}{self.tsmult[t]:10f} ")
             if self.steady[t]:
                 f_dis.write(" SS\n")
             else:
@@ -666,7 +640,7 @@ class ModflowDis(Package):
         ----------
         f : str or file handle
             String defining file name or file handle for summary file
-            of check method output. If a sting is passed a file handle
+            of check method output. If a string is passed a file handle
             is created. If f is None, check method does not write
             results to a summary file. (default is None)
         verbose : bool
@@ -700,10 +674,7 @@ class ModflowDis(Package):
             thickness = np.ma.array(thickness, mask=non_finite)
 
         chk.values(
-            thickness,
-            active & (thickness <= 0),
-            "zero or negative thickness",
-            "Error",
+            thickness, active & (thickness <= 0), "zero or negative thickness", "Error"
         )
         thin_cells = (thickness < chk.thin_cell_threshold) & (thickness > 0)
         chk.values(
@@ -773,62 +744,11 @@ class ModflowDis(Package):
             f = open(filename, "r")
 
         # dataset 0 -- header
-        header = ""
         while True:
             line = f.readline()
             if line[0] != "#":
                 break
-            header += line.strip()
 
-        header = header.replace("#", "")
-        xul, yul = None, None
-        rotation = None
-        proj4_str = None
-        start_datetime = "1/1/1970"
-        dep = False
-        for item in header.split(","):
-            if "xul" in item.lower():
-                try:
-                    xul = float(item.split(":")[1])
-                except:
-                    if model.verbose:
-                        print(f"   could not parse xul in {filename}")
-                dep = True
-            elif "yul" in item.lower():
-                try:
-                    yul = float(item.split(":")[1])
-                except:
-                    if model.verbose:
-                        print(f"   could not parse yul in {filename}")
-                dep = True
-            elif "rotation" in item.lower():
-                try:
-                    rotation = float(item.split(":")[1])
-                except:
-                    if model.verbose:
-                        print(f"   could not parse rotation in {filename}")
-                dep = True
-            elif "proj4_str" in item.lower():
-                try:
-                    proj4_str = ":".join(item.split(":")[1:]).strip()
-                except:
-                    if model.verbose:
-                        print(f"   could not parse proj4_str in {filename}")
-                dep = True
-            elif "start" in item.lower():
-                try:
-                    start_datetime = item.split(":")[1].strip()
-                except:
-                    if model.verbose:
-                        print(f"   could not parse start in {filename}")
-                dep = True
-        if dep:
-            warnings.warn(
-                "SpatialReference information found in DIS header,"
-                "this information is being ignored.  "
-                "SpatialReference info is now stored in the namfile"
-                "header"
-            )
         # dataset 1
         nlay, nrow, ncol, nper, itmuni, lenuni = line.strip().split()[0:6]
         nlay = int(nlay)
@@ -860,21 +780,15 @@ class ModflowDis(Package):
         # dataset 3 -- delr
         if model.verbose:
             print("   loading delr...")
-        delr = Util2d.load(
-            f, model, (ncol,), np.float32, "delr", ext_unit_dict
-        )
+        delr = Util2d.load(f, model, (ncol,), np.float32, "delr", ext_unit_dict)
         # dataset 4 -- delc
         if model.verbose:
             print("   loading delc...")
-        delc = Util2d.load(
-            f, model, (nrow,), np.float32, "delc", ext_unit_dict
-        )
+        delc = Util2d.load(f, model, (nrow,), np.float32, "delc", ext_unit_dict)
         # dataset 5 -- top
         if model.verbose:
             print("   loading top...")
-        top = Util2d.load(
-            f, model, (nrow, ncol), np.float32, "top", ext_unit_dict
-        )
+        top = Util2d.load(f, model, (nrow, ncol), np.float32, "top", ext_unit_dict)
         # dataset 6 -- botm
         ncbd = laycbd.sum()
         if model.verbose:
@@ -945,20 +859,11 @@ class ModflowDis(Package):
             steady=steady,
             itmuni=itmuni,
             lenuni=lenuni,
-            xul=xul,
-            yul=yul,
-            rotation=rotation,
-            crs=proj4_str,
-            start_datetime=start_datetime,
             unitnumber=unitnumber,
             filenames=filenames,
         )
         if check:
-            dis.check(
-                f=f"{dis.name[0]}.chk",
-                verbose=dis.parent.verbose,
-                level=0,
-            )
+            dis.check(f=f"{dis.name[0]}.chk", verbose=dis.parent.verbose, level=0)
         # return dis object instance
         return dis
 

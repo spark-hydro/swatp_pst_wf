@@ -5,6 +5,7 @@ Additional information for this MODFLOW package can be found at the `Online
 MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow-nwt/MODFLOW-NWT-Guide/swi2_seawater_intrusion_pack.html>`_.
 """
+
 import numpy as np
 
 from ..pakbase import Package
@@ -26,10 +27,9 @@ class ModflowSwi2(Package):
         flag indicating the density distribution. (default is 1).
     iswizt : int
         unit number for zeta output. (default is None).
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is None).
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
     iswiobs : int
         flag and unit number SWI2 observation output. (default is 0).
     options : list of strings
@@ -234,21 +234,13 @@ class ModflowSwi2(Package):
         # update external file information with zeta output, if necessary
         if iswizt is not None:
             model.add_output_file(
-                iswizt,
-                fname=filenames[1],
-                extension="zta",
-                package=self._ftype(),
+                iswizt, fname=filenames[1], extension="zta", package=self._ftype()
             )
         else:
             iswizt = 0
 
-        # update external file information with swi2 cell-by-cell output,
-        # if necessary
-        if ipakcb is not None:
-            fname = filenames[2]
-            model.add_output_file(ipakcb, fname=fname, package=self._ftype())
-        else:
-            ipakcb = 0
+        # cbc output file
+        self.set_cbc_output_file(ipakcb, model, filenames[2])
 
         # Process observations
         if nobs != 0:
@@ -276,7 +268,7 @@ class ModflowSwi2(Package):
                 if len(obsnam) != nobs:
                     raise Exception(
                         "ModflowSwi2: obsnam must be a list with a "
-                        "length of {} not {}.".format(nobs, len(obsnam))
+                        f"length of {nobs} not {len(obsnam)}."
                     )
 
         if nobs > 0:
@@ -338,8 +330,6 @@ class ModflowSwi2(Package):
         self.nobs = nobs
         self.iswizt = iswizt
         self.iswiobs = iswiobs
-        # set cbc unit
-        self.ipakcb = ipakcb
 
         # set solver flags
         self.nsolver = nsolver
@@ -359,27 +349,17 @@ class ModflowSwi2(Package):
 
         # Create arrays so that they have the correct size
         if self.istrat == 1:
-            self.nu = Util2d(
-                model, (self.nsrf + 1,), np.float32, nu, name="nu"
-            )
+            self.nu = Util2d(model, (self.nsrf + 1,), np.float32, nu, name="nu")
         else:
-            self.nu = Util2d(
-                model, (self.nsrf + 2,), np.float32, nu, name="nu"
-            )
+            self.nu = Util2d(model, (self.nsrf + 2,), np.float32, nu, name="nu")
         self.zeta = []
         for i in range(self.nsrf):
             self.zeta.append(
                 Util3d(
-                    model,
-                    (nlay, nrow, ncol),
-                    np.float32,
-                    zeta[i],
-                    name=f"zeta_{i + 1}",
+                    model, (nlay, nrow, ncol), np.float32, zeta[i], name=f"zeta_{i + 1}"
                 )
             )
-        self.ssz = Util3d(
-            model, (nlay, nrow, ncol), np.float32, ssz, name="ssz"
-        )
+        self.ssz = Util3d(model, (nlay, nrow, ncol), np.float32, ssz, name="ssz")
         self.isource = Util3d(
             model, (nlay, nrow, ncol), np.int32, isource, name="isource"
         )
@@ -426,7 +406,7 @@ class ModflowSwi2(Package):
         )
 
         # write SWI2 options
-        if self.options != None:
+        if self.options is not None:
             for o in self.options:
                 f.write(f" {o}")
         f.write("\n")
@@ -458,9 +438,7 @@ class ModflowSwi2(Package):
         # write dataset 3b
         if self.adaptive is True:
             f.write("# Dataset 3b\n")
-            f.write(
-                f"{self.nadptmx:10d}{self.nadptmn:10d}{self.adptfct:14.6g}\n"
-            )
+            f.write(f"{self.nadptmx:10d}{self.nadptmn:10d}{self.adptfct:14.6g}\n")
         # write dataset 4
         f.write("# Dataset 4\n")
         f.write(self.nu.get_file_entry())
@@ -483,7 +461,6 @@ class ModflowSwi2(Package):
         if self.nobs > 0:
             f.write("# Dataset 8\n")
             for i in range(self.nobs):
-                # f.write(self.obsnam[i] + 3 * '%10i' % self.obslrc + '\n')
                 f.write(f"{self.obsnam[i]} ")
                 for v in self.obslrc[i, :]:
                     f.write(f"{v + 1:10d}")
@@ -661,12 +638,7 @@ class ModflowSwi2(Package):
             ctxt = f"zeta_surf{n + 1:02d}"
             zeta.append(
                 Util3d.load(
-                    f,
-                    model,
-                    (nlay, nrow, ncol),
-                    np.float32,
-                    ctxt,
-                    ext_unit_dict,
+                    f, model, (nlay, nrow, ncol), np.float32, ctxt, ext_unit_dict
                 )
             )
 
@@ -731,13 +703,9 @@ class ModflowSwi2(Package):
                 ext_unit_dict, filetype=ModflowSwi2._ftype()
             )
             if iswizt > 0:
-                iu, filenames[1] = model.get_ext_dict_attr(
-                    ext_unit_dict, unit=iswizt
-                )
+                iu, filenames[1] = model.get_ext_dict_attr(ext_unit_dict, unit=iswizt)
             if ipakcb > 0:
-                iu, filenames[2] = model.get_ext_dict_attr(
-                    ext_unit_dict, unit=ipakcb
-                )
+                iu, filenames[2] = model.get_ext_dict_attr(ext_unit_dict, unit=ipakcb)
             if abs(iswiobs) > 0:
                 iu, filenames[3] = model.get_ext_dict_attr(
                     ext_unit_dict, unit=abs(iswiobs)

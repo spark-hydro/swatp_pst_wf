@@ -7,6 +7,7 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow-nwt/MODFLOW-NWT-Guide/upw_upstream_weighting_package.html>`_.
 
 """
+
 import numpy as np
 
 from ..pakbase import Package
@@ -25,10 +26,9 @@ class ModflowUpw(Package):
     model : model object
         The model object (of type :class:`flopy.modflow.mf.Modflow`) to which
         this package will be added.
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is 0).
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
     hdry : float
         Is the head that is assigned to cells that are converted to dry during
         a simulation. Although this value plays no role in the model
@@ -108,9 +108,9 @@ class ModflowUpw(Package):
         filenames=None the package name will be created using the model name
         and package extension and the cbc output name will be created using
         the model name and .cbc extension (for example, modflowtest.cbc),
-        if ipakcbc is a number greater than zero. If a single string is passed
+        if ipakcb is a number greater than zero. If a single string is passed
         the package will be set to the string and cbc output name will be
-        created using the model name and .cbc extension, if ipakcbc is a
+        created using the model name and .cbc extension, if ipakcb is a
         number greater than zero. To define the names for all package files
         (input and output) the length of the list of strings should be 2.
         Default is None.
@@ -161,8 +161,7 @@ class ModflowUpw(Package):
     ):
         if model.version != "mfnwt":
             raise Exception(
-                "Error: model version must be mfnwt to use "
-                f"{self._ftype()} package"
+                f"Error: model version must be mfnwt to use {self._ftype()} package"
             )
 
         # set default unit number of one is not specified
@@ -172,13 +171,8 @@ class ModflowUpw(Package):
         # set filenames
         filenames = self._prepare_filenames(filenames, 2)
 
-        # update external file information with cbc output, if necessary
-        if ipakcb is not None:
-            model.add_output_file(
-                ipakcb, fname=filenames[1], package=self._ftype()
-            )
-        else:
-            ipakcb = 0
+        # cbc output file
+        self.set_cbc_output_file(ipakcb, model, filenames[1])
 
         # call base package constructor
         super().__init__(
@@ -193,8 +187,6 @@ class ModflowUpw(Package):
         self.url = "upw_upstream_weighting_package.html"
 
         nrow, ncol, nlay, nper = self.parent.nrow_ncol_nlay_nper
-        # item 1
-        self.ipakcb = ipakcb
         # Head in cells that are converted to dry during a simulation
         self.hdry = hdry
         # number of UPW parameters
@@ -282,11 +274,7 @@ class ModflowUpw(Package):
         """
         # allows turning off package checks when writing files at model level
         if check:
-            self.check(
-                f=f"{self.name[0]}.chk",
-                verbose=self.parent.verbose,
-                level=1,
-            )
+            self.check(f=f"{self.name[0]}.chk", verbose=self.parent.verbose, level=1)
         nrow, ncol, nlay, nper = self.parent.nrow_ncol_nlay_nper
         if f is not None:
             f_upw = f
@@ -370,8 +358,8 @@ class ModflowUpw(Package):
 
         if model.version != "mfnwt":
             print(
-                "Warning: model version was reset from '{}' to 'mfnwt' "
-                "in order to load a UPW file".format(model.version)
+                f"Warning: model version was reset from '{model.version}' "
+                "to 'mfnwt' in order to load a UPW file"
             )
             model.version = "mfnwt"
 
@@ -391,12 +379,7 @@ class ModflowUpw(Package):
         if model.verbose:
             print("   loading ipakcb, HDRY, NPUPW, IPHDRY...")
         t = line_parse(line)
-        ipakcb, hdry, npupw, iphdry = (
-            int(t[0]),
-            float(t[1]),
-            int(t[2]),
-            int(t[3]),
-        )
+        ipakcb, hdry, npupw, iphdry = (int(t[0]), float(t[1]), int(t[2]), int(t[3]))
 
         # options
         noparcheck = False
@@ -459,9 +442,7 @@ class ModflowUpw(Package):
             if model.verbose:
                 print(f"   loading hk layer {k + 1:3d}...")
             if "hk" not in par_types:
-                t = Util2d.load(
-                    f, model, (nrow, ncol), np.float32, "hk", ext_unit_dict
-                )
+                t = Util2d.load(f, model, (nrow, ncol), np.float32, "hk", ext_unit_dict)
             else:
                 line = f.readline()
                 t = mfpar.parameter_fill(
@@ -475,12 +456,7 @@ class ModflowUpw(Package):
                     print(f"   loading hani layer {k + 1:3d}...")
                 if "hani" not in par_types:
                     t = Util2d.load(
-                        f,
-                        model,
-                        (nrow, ncol),
-                        np.float32,
-                        "hani",
-                        ext_unit_dict,
+                        f, model, (nrow, ncol), np.float32, "hani", ext_unit_dict
                     )
                 else:
                     line = f.readline()
@@ -496,9 +472,7 @@ class ModflowUpw(Package):
             if layvka[k] != 0:
                 key = "vani"
             if "vk" not in par_types and "vani" not in par_types:
-                t = Util2d.load(
-                    f, model, (nrow, ncol), np.float32, key, ext_unit_dict
-                )
+                t = Util2d.load(f, model, (nrow, ncol), np.float32, key, ext_unit_dict)
             else:
                 line = f.readline()
                 t = mfpar.parameter_fill(
@@ -528,12 +502,7 @@ class ModflowUpw(Package):
                         print(f"   loading sy layer {k + 1:3d}...")
                     if "sy" not in par_types:
                         t = Util2d.load(
-                            f,
-                            model,
-                            (nrow, ncol),
-                            np.float32,
-                            "sy",
-                            ext_unit_dict,
+                            f, model, (nrow, ncol), np.float32, "sy", ext_unit_dict
                         )
                     else:
                         line = f.readline()
@@ -548,12 +517,7 @@ class ModflowUpw(Package):
                     print(f"   loading vkcb layer {k + 1:3d}...")
                 if "vkcb" not in par_types:
                     t = Util2d.load(
-                        f,
-                        model,
-                        (nrow, ncol),
-                        np.float32,
-                        "vkcb",
-                        ext_unit_dict,
+                        f, model, (nrow, ncol), np.float32, "vkcb", ext_unit_dict
                     )
                 else:
                     line = f.readline()
@@ -573,9 +537,7 @@ class ModflowUpw(Package):
                 ext_unit_dict, filetype=ModflowUpw._ftype()
             )
             if ipakcb > 0:
-                iu, filenames[1] = model.get_ext_dict_attr(
-                    ext_unit_dict, unit=ipakcb
-                )
+                iu, filenames[1] = model.get_ext_dict_attr(ext_unit_dict, unit=ipakcb)
                 model.add_pop_key_list(ipakcb)
 
         # create upw object
@@ -600,11 +562,7 @@ class ModflowUpw(Package):
             filenames=filenames,
         )
         if check:
-            upw.check(
-                f=f"{upw.name[0]}.chk",
-                verbose=upw.parent.verbose,
-                level=0,
-            )
+            upw.check(f=f"{upw.name[0]}.chk", verbose=upw.parent.verbose, level=0)
 
         # return upw object
         return upw

@@ -19,6 +19,7 @@ assistance is welcomed. Please email the development team if you want to
 contribute.
 
 """
+
 # See CITATION.cff for authors
 __author__ = "FloPy Team"
 
@@ -42,18 +43,18 @@ from .mbase import run_model, which
 __all__ = [
     "__author__",
     "__version__",
+    "discretization",
+    "export",
+    "mf6",
     "modflow",
-    "mt3d",
-    "seawat",
-    "modpath",
     "modflowlgr",
     "modflowusg",
-    "utils",
-    "plot",
-    "export",
+    "modpath",
+    "mt3d",
     "pest",
-    "mf6",
-    "discretization",
+    "plot",
     "run_model",
+    "seawat",
+    "utils",
     "which",
 ]

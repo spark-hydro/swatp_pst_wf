@@ -7,10 +7,11 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow/MODFLOW-2005-Guide/name_file.html>`_.
 
 """
+
 import os
 from os import PathLike
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import List, Tuple, Union
+from typing import Optional, Union
 
 
 class NamData:
@@ -205,7 +206,17 @@ def parsenamefile(namfilename, packages, verbose=True):
 
 
 def attribs_from_namfile_header(namefile):
-    # check for reference info in the nam file header
+    """Return spatial and temporal reference info from the nam header.
+
+    Parameters
+    ----------
+    namefile : str, PathLike or None
+        Path to NAM file to read.
+
+    Returns
+    -------
+    dict
+    """
     defaults = {
         "xll": None,
         "yll": None,
@@ -255,7 +266,6 @@ def attribs_from_namfile_header(namefile):
             except:
                 print(f"   could not parse rotation in {namefile}")
         elif "proj4_str" in item.lower():
-            # deprecated, use "crs" instead
             try:
                 proj4 = ":".join(item.split(":")[1:]).strip()
                 if proj4.lower() == "none":
@@ -277,16 +287,20 @@ def attribs_from_namfile_header(namefile):
                 defaults["start_datetime"] = start_datetime
             except:
                 print(f"   could not parse start in {namefile}")
+    if "proj4_str" in defaults and defaults["crs"] is None:
+        # handle deprecated keyword, use "crs" instead
+        defaults["crs"] = defaults.pop("proj4_str")
     return defaults
 
 
 def get_entries_from_namefile(
     path: Union[str, PathLike],
-    ftype: str = None,
-    unit: int = None,
-    extension: str = None,
-) -> List[Tuple]:
-    """Get entries from an MF6 namefile. Can select using FTYPE, UNIT, or file extension.
+    ftype: Optional[str] = None,
+    unit: Optional[int] = None,
+    extension: Optional[str] = None,
+) -> list[tuple]:
+    """Get entries from an MF6 namefile. Can select using FTYPE, UNIT, or file
+    extension.
     This function only supports MF6 namefiles.
 
     Parameters
@@ -467,7 +481,7 @@ def get_mf6_nper(tdisfile):
     """
     with open(tdisfile) as f:
         lines = f.readlines()
-    line = [line for line in lines if "NPER" in line.upper()][0]
+    line = next(line for line in lines if "NPER" in line.upper())
     nper = line.strip().split()[1]
     return nper
 
@@ -595,7 +609,6 @@ def get_mf6_files(mfnamefile):
         if len(olist) > 0:
             outplist = outplist + olist
         # terminate loop if no additional files
-        # if len(flist) < 1 and len(olist) < 1:
         if len(flist) < 1:
             break
 

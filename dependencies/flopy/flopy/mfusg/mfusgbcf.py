@@ -4,6 +4,7 @@ Mfusgbcf module.
 Contains the MfUsgBcf class. Note that the user can
 access the MfUsgBcf class as `flopy.mfusg.MfUsgBcf`.
 """
+
 import numpy as np
 
 from ..modflow import ModflowBcf
@@ -26,10 +27,9 @@ class MfUsgBcf(ModflowBcf):
     model : model object
         The model object (of type :class:`flopy.modflow.Modflow`) to which
         this package will be added.
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is 53)
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
     intercellt : int
         Intercell transmissivities, harmonic mean (0), arithmetic mean (1),
         logarithmic mean (2), combination (3). (default is 0)
@@ -74,7 +74,7 @@ class MfUsgBcf(ModflowBcf):
         is the vertical hydraulic conductivity of the cell and the leakance is
         computed for each vertical connection.
     sf1 : float or array of floats (nlay, nrow, ncol)
-        specific storage (confined) or storage coefficient (unconfined),
+        specific storage (confined) or specific yield (unconfined),
         read when there is at least one transient stress period.
         (default is 1e-5)
     sf2 : float or array of floats (nlay, nrow, ncol)
@@ -96,9 +96,9 @@ class MfUsgBcf(ModflowBcf):
         filenames=None the package name will be created using the model name
         and package extension and the cbc output name will be created using
         the model name and .cbc extension (for example, modflowtest.cbc),
-        if ipakcbc is a number greater than zero. If a single string is passed
+        if ipakcb is a number greater than zero. If a single string is passed
         the package will be set to the string and cbc output name will be
-        created using the model name and .cbc extension, if ipakcbc is a
+        created using the model name and .cbc extension, if ipakcb is a
         number greater than zero. To define the names for all package files
         (input and output) the length of the list of strings should be 2.
         Default is None.
@@ -201,12 +201,7 @@ class MfUsgBcf(ModflowBcf):
         if not structured:
             njag = dis.njag
             self.anglex = Util2d(
-                model,
-                (njag,),
-                np.float32,
-                anglex,
-                "anglex",
-                locat=self.unit_number[0],
+                model, (njag,), np.float32, anglex, "anglex", locat=self.unit_number[0]
             )
 
         # item 1
@@ -219,13 +214,8 @@ class MfUsgBcf(ModflowBcf):
             locat=self.unit_number[0],
         )
         if not structured:
-            self.ksat = Util3d(
-                model,
-                (njag,),
-                np.float32,
-                ksat,
-                "ksat",
-                locat=self.unit_number[0],
+            self.ksat = Util2d(
+                model, (njag,), np.float32, ksat, "ksat", locat=self.unit_number[0]
             )
 
         if add_package:
@@ -261,9 +251,7 @@ class MfUsgBcf(ModflowBcf):
         # LAYCON array
         for layer in range(nlay):
             if self.intercellt[layer] > 0:
-                f_obj.write(
-                    f"{self.intercellt[layer]:1d} {self.laycon[layer]:1d} "
-                )
+                f_obj.write(f"{self.intercellt[layer]:1d} {self.laycon[layer]:1d} ")
             else:
                 f_obj.write(f"0{self.laycon[layer]:1d} ")
         f_obj.write("\n")
@@ -344,7 +332,8 @@ class MfUsgBcf(ModflowBcf):
         >>> import flopy
         >>> m = flopy.mfusg.MfUsg()
         >>> disu = flopy.mfusg.MfUsgDisU(
-            model=m, nlay=1, nodes=1, iac=[1], njag=1,ja=np.array([0]), fahl=[1.0], cl12=[1.0])
+        ...     model=m, nlay=1, nodes=1, iac=[1], njag=1,ja=np.array([0]),
+        ...     fahl=[1.0], cl12=[1.0])
         >>> bcf = flopy.mfusg.MfUsgBcf.load('test.bcf', m)
         """
         msg = (
@@ -384,12 +373,8 @@ class MfUsgBcf(ModflowBcf):
             int(text_list[5]),
         )
 
-        ikvflag = type_from_iterable(
-            text_list, index=6, _type=int, default_val=0
-        )
-        ikcflag = type_from_iterable(
-            text_list, index=7, _type=int, default_val=0
-        )
+        ikvflag = type_from_iterable(text_list, index=6, _type=int, default_val=0)
+        ikcflag = type_from_iterable(text_list, index=7, _type=int, default_val=0)
 
         # LAYCON array
         laycon, intercellt = cls._load_laycon(f_obj, model)
@@ -397,9 +382,7 @@ class MfUsgBcf(ModflowBcf):
         # TRPY array
         if model.verbose:
             print("   loading TRPY...")
-        trpy = Util2d.load(
-            f_obj, model, (nlay,), np.float32, "trpy", ext_unit_dict
-        )
+        trpy = Util2d.load(f_obj, model, (nlay,), np.float32, "trpy", ext_unit_dict)
 
         # property data for each layer based on options
         transient = not dis.steady.all()
@@ -430,9 +413,7 @@ class MfUsgBcf(ModflowBcf):
         if (not model.structured) and abs(ikcflag == 1):
             if model.verbose:
                 print("   loading ksat (njag)...")
-            ksat = Util2d.load(
-                f_obj, model, (njag,), np.float32, "ksat", ext_unit_dict
-            )
+            ksat = Util2d.load(f_obj, model, (njag,), np.float32, "ksat", ext_unit_dict)
 
         f_obj.close()
 
@@ -595,12 +576,7 @@ class MfUsgBcf(ModflowBcf):
                 if model.verbose:
                     print(f"   loading sf1 layer {layer + 1:3d}...")
                 sf1[layer] = Util2d.load(
-                    f_obj,
-                    model,
-                    util2d_shape,
-                    np.float32,
-                    "sf1",
-                    ext_unit_dict,
+                    f_obj, model, util2d_shape, np.float32, "sf1", ext_unit_dict
                 )
 
             # hy/tran, and kv/vcont
@@ -625,12 +601,7 @@ class MfUsgBcf(ModflowBcf):
                 if model.verbose:
                     print(f"   loading sf2 layer {layer + 1:3d}...")
                 sf2[layer] = Util2d.load(
-                    f_obj,
-                    model,
-                    util2d_shape,
-                    np.float32,
-                    "sf2",
-                    ext_unit_dict,
+                    f_obj, model, util2d_shape, np.float32, "sf2", ext_unit_dict
                 )
 
             # wetdry
@@ -638,12 +609,7 @@ class MfUsgBcf(ModflowBcf):
                 if model.verbose:
                     print(f"   loading sf2 layer {layer + 1:3d}...")
                 wetdry[layer] = Util2d.load(
-                    f_obj,
-                    model,
-                    util2d_shape,
-                    np.float32,
-                    "wetdry",
-                    ext_unit_dict,
+                    f_obj, model, util2d_shape, np.float32, "wetdry", ext_unit_dict
                 )
 
         return sf1, tran, hy, vcont, sf2, wetdry, kv
@@ -683,12 +649,7 @@ class MfUsgBcf(ModflowBcf):
             if model.verbose:
                 print(f"   loading tran layer {layer + 1:3d}...")
             _tran = Util2d.load(
-                f_obj,
-                model,
-                util2d_shape,
-                np.float32,
-                "tran",
-                ext_unit_dict,
+                f_obj, model, util2d_shape, np.float32, "tran", ext_unit_dict
             )
         else:
             if model.verbose:
@@ -704,12 +665,7 @@ class MfUsgBcf(ModflowBcf):
             if model.verbose:
                 print(f"   loading vcont layer {layer + 1:3d}...")
             _vcont = Util2d.load(
-                f_obj,
-                model,
-                util2d_shape,
-                np.float32,
-                "vcont",
-                ext_unit_dict,
+                f_obj, model, util2d_shape, np.float32, "vcont", ext_unit_dict
             )
         elif (ikvflag == 1) and (model.nlay > 1):
             if model.verbose:

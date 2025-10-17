@@ -316,7 +316,7 @@ class DataStorage:
         self.data_structure_type = data_structure_type
         package_dim = self.data_dimensions.package_dim
         self.in_model = (
-            self.data_dimensions is not None
+            package_dim is not None
             and len(package_dim.package_path) > 1
             and package_dim.model_dim[0].model_name is not None
             and package_dim.model_dim[0].model_name.lower()
@@ -497,6 +497,22 @@ class DataStorage:
                             layer_str,
                             self._get_layer_header_str(index),
                         )
+            elif storage.data_storage_type == DataStorageType.external_file:
+                header = self._get_layer_header_str(index)
+                if self.layered:
+                    data_str = "{}{}{{{}}}\n({})\n".format(
+                        data_str,
+                        layer_str,
+                        header,
+                        "External data not displayed",
+                    )
+                else:
+                    data_str = "{}{}{{{}}}\n({})\n".format(
+                        data_str,
+                        layer_str,
+                        header,
+                        "External data not displayed",
+                    )
         return data_str
 
     def _get_layer_header_str(self, layer):
@@ -1003,7 +1019,8 @@ class DataStorage:
             if isinstance(data, np.ndarray):
                 # try to store while preserving the structure of the
                 # existing record
-                if self.layer_storage.get_total_size() > 1:
+                is_aux = self.data_dimensions.structure.name == "aux"
+                if not is_aux and self.layer_storage.get_total_size() > 1:
                     if len(data) == self.layer_storage.get_total_size():
                         # break ndarray into layers and store
                         success = self._set_array_by_layer(
@@ -1277,6 +1294,10 @@ class DataStorage:
                     DataStorageType.internal_array
                 )
                 if data is None or isinstance(data, np.recarray):
+                    if not self.tuple_cellids(data):
+                        # fix data so cellid is a single tuple
+                        data = self.make_tuple_cellids(data.tolist())
+                if data is None or isinstance(data, np.recarray):
                     if self._simulation_data.verify_data and check_data:
                         self._verify_list(data)
                     self.layer_storage.first_item().internal_data = data
@@ -1403,6 +1424,14 @@ class DataStorage:
                         message,
                         self._simulation_data.debug,
                     )
+                data_type = self.data_dimensions.structure.get_datum_type(True)
+                dt = self.layer_storage[layer].internal_data.dtype
+                if dt != data_type:
+                    self.layer_storage[
+                        layer
+                    ].internal_data = self.layer_storage[
+                        layer
+                    ].internal_data.astype(data_type)
             if not preserve_record:
                 self.layer_storage[layer].factor = multiplier
                 self.layer_storage[layer].iprn = print_format
@@ -1569,15 +1598,6 @@ class DataStorage:
             self._verify_list(new_data)
         return new_data
 
-    def _get_cellid_size(self, data_item_name):
-        model_num = DatumUtil.cellid_model_num(
-            data_item_name,
-            self.data_dimensions.structure.model_data,
-            self.data_dimensions.package_dim.model_dim,
-        )
-        model_grid = self.data_dimensions.get_model_grid(model_num=model_num)
-        return model_grid.get_num_spatial_coordinates()
-
     def make_tuple_cellids(self, data):
         # convert cellids from individual layer, row, column fields into
         # tuples (layer, row, column)
@@ -1588,7 +1608,7 @@ class DataStorage:
             new_line = []
             for item, is_cellid in zip(line, self.recarray_cellid_list_ex):
                 if is_cellid:
-                    cellid_size = self._get_cellid_size(
+                    cellid_size = self.data_dimensions.get_cellid_size(
                         self._recarray_type_list[data_idx][0],
                     )
                     current_cellid += (item,)
@@ -1602,9 +1622,15 @@ class DataStorage:
         return new_data
 
     def tuple_cellids(self, data):
+        if data is None or len(data) == 0:
+            return True
         for data_entry, cellid in zip(data[0], self.recarray_cellid_list):
             if cellid:
-                if isinstance(data_entry, int):
+                if (
+                    isinstance(data_entry, int)
+                    or isinstance(data_entry, np.int32)
+                    or isinstance(data_entry, np.int64)
+                ):
                     # cellid is stored in separate columns in the recarray
                     # (eg: one column for layer one column for row and
                     # one columne for column)
@@ -1727,10 +1753,7 @@ class DataStorage:
                         self._stress_period,
                     )
                     file_access.write_binary_file(
-                        self.layer_storage.first_item().internal_data,
-                        fp,
-                        self._model_or_sim.modeldiscrit,
-                        precision="double",
+                        self.layer_storage.first_item().internal_data, fp
                     )
                 else:
                     # make sure folder exists
@@ -1768,15 +1791,6 @@ class DataStorage:
                 # set as external data
                 self.layer_storage.first_item().internal_data = None
             else:
-                # if self.layer_storage.in_shape(layer_new):
-                #    factor = self.layer_storage[layer_new].factor
-                # if preserve_record:
-                #    adjustment = multiplier / factor
-                #    if adjustment != 1.0:
-                # convert numbers to be multiplied by the
-                # original factor
-                #        data = data * adjustment
-
                 # store data externally in file
                 data_size = self.get_data_size(layer_new)
                 data_type = data_dim.structure.data_item_structures[0].type
@@ -1978,6 +1992,7 @@ class DataStorage:
                     self._data_type,
                     self.get_data_dimensions(layer),
                     layer,
+                    self.layered,
                     read_file,
                 )[0]
             if apply_mult and self.layer_storage[layer].factor is not None:
@@ -1995,9 +2010,7 @@ class DataStorage:
                 self._stress_period,
             )
             if self.layer_storage[layer].binary:
-                data = file_access.read_binary_data_from_file(
-                    read_file, self._model_or_sim.modeldiscrit
-                )
+                data = file_access.read_binary_data_from_file(read_file)
                 data_out = self._build_recarray(data, layer, False)
             else:
                 with open(read_file) as fd_read_file:
@@ -2072,8 +2085,9 @@ class DataStorage:
             )
         except Exception as se:
             comment = (
-                'Unable to resolve shape for data "{}" field "{}"'
-                ".".format(struct.name, data_item.name)
+                'Unable to resolve shape for data "{}" field "{}"' ".".format(
+                    struct.name, data_item.name
+                )
             )
             type_, value_, traceback_ = sys.exc_info()
             raise MFDataException(
@@ -2108,7 +2122,7 @@ class DataStorage:
             return False
         if arr_line is None:
             return False
-        cellid_size = self._get_cellid_size(data_item.name)
+        cellid_size = self.data_dimensions.get_cellid_size(data_item.name)
         model_grid = self.data_dimensions.get_model_grid()
         if cellid_size + data_index > len(arr_line):
             return False
@@ -2168,136 +2182,28 @@ class DataStorage:
         return multiplier, print_format
 
     def process_open_close_line(self, arr_line, layer, store=True):
-        # process open/close line
-        index = 2
-        if self._data_type == DatumType.integer:
-            multiplier = 1
-        else:
-            multiplier = 1.0
-        print_format = None
-        binary = False
-        data_file = None
-        data = None
-
         data_dim = self.data_dimensions
-        if isinstance(arr_line, list):
-            if len(arr_line) < 2 and store:
-                message = (
-                    'Data array "{}" contains a OPEN/CLOSE '
-                    "that is not followed by a file. {}".format(
-                        data_dim.structure.name, data_dim.structure.path
-                    )
-                )
-                type_, value_, traceback_ = sys.exc_info()
-                raise MFDataException(
-                    self.data_dimensions.structure.get_model(),
-                    self.data_dimensions.structure.get_package(),
-                    self.data_dimensions.structure.path,
-                    "processing open/close line",
-                    data_dim.structure.name,
-                    inspect.stack()[0][3],
-                    type_,
-                    value_,
-                    traceback_,
-                    message,
-                    self._simulation_data.debug,
-                )
-            while index < len(arr_line):
-                if isinstance(arr_line[index], str):
-                    word = arr_line[index].lower()
-                    if word == "factor" and index + 1 < len(arr_line):
-                        try:
-                            multiplier = convert_data(
-                                arr_line[index + 1],
-                                self.data_dimensions,
-                                self._data_type,
-                            )
-                        except Exception as ex:
-                            message = (
-                                "Data array {} contains an OPEN/CLOSE "
-                                "with an invalid multiplier following "
-                                'the "factor" keyword.'
-                                ".".format(data_dim.structure.name)
-                            )
-                            type_, value_, traceback_ = sys.exc_info()
-                            raise MFDataException(
-                                self.data_dimensions.structure.get_model(),
-                                self.data_dimensions.structure.get_package(),
-                                self.data_dimensions.structure.path,
-                                "processing open/close line",
-                                data_dim.structure.name,
-                                inspect.stack()[0][3],
-                                type_,
-                                value_,
-                                traceback_,
-                                message,
-                                self._simulation_data.debug,
-                                ex,
-                            )
-                        index += 2
-                    elif word == "iprn" and index + 1 < len(arr_line):
-                        print_format = arr_line[index + 1]
-                        index += 2
-                    elif word == "data" and index + 1 < len(arr_line):
-                        data = arr_line[index + 1]
-                        index += 2
-                    elif word == "binary" or word == "(binary)":
-                        binary = True
-                        index += 1
-                    else:
-                        break
-                else:
-                    break
-                # save comments
-            if index < len(arr_line):
-                self.layer_storage[layer].comments = MFComment(
-                    " ".join(arr_line[index:]),
-                    self.data_dimensions.structure.path,
-                    self._simulation_data,
-                    layer,
-                )
-            if arr_line[0].lower() == "open/close":
-                data_file = clean_filename(arr_line[1])
-            else:
-                data_file = clean_filename(arr_line[0])
-        elif isinstance(arr_line, dict):
-            for key, value in arr_line.items():
-                if key.lower() == "factor":
-                    try:
-                        multiplier = convert_data(
-                            value, self.data_dimensions, self._data_type
-                        )
-                    except Exception as ex:
-                        message = (
-                            "Data array {} contains an OPEN/CLOSE "
-                            "with an invalid factor following the "
-                            '"factor" keyword.'
-                            ".".format(data_dim.structure.name)
-                        )
-                        type_, value_, traceback_ = sys.exc_info()
-                        raise MFDataException(
-                            self.data_dimensions.structure.get_model(),
-                            self.data_dimensions.structure.get_package(),
-                            self.data_dimensions.structure.path,
-                            "processing open/close line",
-                            data_dim.structure.name,
-                            inspect.stack()[0][3],
-                            type_,
-                            value_,
-                            traceback_,
-                            message,
-                            self._simulation_data.debug,
-                            ex,
-                        )
-                if key.lower() == "iprn":
-                    print_format = value
-                if key.lower() == "binary":
-                    binary = bool(value)
-                if key.lower() == "data":
-                    data = value
-            if "filename" in arr_line:
-                data_file = clean_filename(arr_line["filename"])
-
+        (
+            multiplier,
+            print_format,
+            binary,
+            data_file,
+            data,
+            comment,
+        ) = mfdatautil.process_open_close_line(
+            arr_line,
+            data_dim,
+            self._data_type,
+            self._simulation_data.debug,
+            store,
+        )
+        if comment is not None:
+            self.layer_storage[layer].comments = MFComment(
+                comment,
+                self.data_dimensions.structure.path,
+                self._simulation_data,
+                layer,
+            )
         if data_file is None:
             message = (
                 "Data array {} contains an OPEN/CLOSE without a "
@@ -2363,7 +2269,7 @@ class DataStorage:
                         # this is a cell id.  verify that it contains the
                         # correct number of integers
                         if cellid_size is None:
-                            cellid_size = self._get_cellid_size(
+                            cellid_size = self.data_dimensions.get_cellid_size(
                                 self._recarray_type_list[index][0]
                             )
                         if (
@@ -2543,6 +2449,7 @@ class DataStorage:
                             np_data_type,
                             self.get_data_dimensions(layer),
                             layer,
+                            self.layered,
                             read_file,
                         )[0]
                         * mult
@@ -2629,7 +2536,7 @@ class DataStorage:
             data_array = np.ndarray(shape=dimensions, dtype=np_dtype)
             # fill array
             for index in ArrayIndexIter(dimensions):
-                data_array.itemset(index, next(data_iter))
+                data_array[index] = next(data_iter)
             return data_array
         elif self.data_structure_type == DataStructureType.scalar:
             return next(data_iter)
@@ -2762,6 +2669,7 @@ class DataStorage:
         resolve_data_shape=True,
         key=None,
         nseg=None,
+        surf_rate_specified=False,
         cellid_expanded=False,
         min_size=False,
         overwrite_existing_type_list=True,
@@ -2805,6 +2713,25 @@ class DataStorage:
                                     aux_var_name, data_type, False
                                 )
 
+                elif self._dependent_opt(data_item):
+                    nval = self._optional_nval(data_item)
+                    if data_item.name == "petm0":
+                        if surf_rate_specified or nval == 1:
+                            self._append_type_lists(
+                                data_item.name, data_type, False
+                            )
+                    elif (
+                        data_item.name == "pxdp"
+                        or data_item.name == "petm"
+                    ):
+                        if (nseg and nseg > 1) or nval > 0:
+                            if nseg is None:
+                                nseg = nval + 1
+                            if nseg > 1:
+                                for seg in range(nseg - 1):
+                                    self._append_type_lists(
+                                        f"{data_item.name}{seg+1}", data_type, False
+                                    )
                 elif data_item.type == DatumType.record:
                     # record within a record, recurse
                     self.build_type_list(data_item, True, data)
@@ -2857,6 +2784,7 @@ class DataStorage:
                     if (
                         data_item.type != DatumType.keyword
                         or data_set.block_variable
+                        or data_item.optional
                     ):
                         initial_keyword = False
                         shape_rule = None
@@ -2903,6 +2831,7 @@ class DataStorage:
                                     data_item,
                                     data_set,
                                     data,
+                                    data_item_num=index,
                                     repeating_key=key,
                                     min_size=min_size,
                                 )
@@ -2943,7 +2872,9 @@ class DataStorage:
                             ):
                                 # A cellid is a single entry (tuple) in the
                                 # recarray.  Adjust dimensions accordingly.
-                                size = self._get_cellid_size(data_item.name)
+                                size = self.data_dimensions.get_cellid_size(
+                                    data_item.name
+                                )
                                 data_item.remove_cellid(resolved_shape, size)
                         if not data_item.optional or not min_size:
                             for index in range(0, resolved_shape[0]):
@@ -2967,6 +2898,28 @@ class DataStorage:
                 self._recarray_type_list_ex = existing_type_list_ex
             return new_type_list
 
+    def _optional_nval(self, data_item):
+        file_access = MFFileAccessList(
+            self.data_dimensions.structure,
+            self.data_dimensions,
+            self._simulation_data,
+            self._data_path,
+            self._stress_period,
+        )
+
+        return file_access._optional_nval(data_item)
+
+    def _dependent_opt(self, data_item):
+        file_access = MFFileAccessList(
+            self.data_dimensions.structure,
+            self.data_dimensions,
+            self._simulation_data,
+            self._data_path,
+            self._stress_period,
+        )
+
+        return file_access._dependent_opt(data_item)
+
     def get_default_mult(self):
         if self._data_type == DatumType.integer:
             return 1
@@ -2980,7 +2933,7 @@ class DataStorage:
         if iscellid and self._model_or_sim.model_type is not None:
             # write each part of the cellid out as a separate entry
             # to _recarray_list_list_ex
-            cellid_size = self._get_cellid_size(name)
+            cellid_size = self.data_dimensions.get_cellid_size(name)
             # determine header for different grid types
             if cellid_size == 1:
                 self._do_ex_list_append(name, int, iscellid)
@@ -3038,8 +2991,10 @@ class DataStorage:
 
     def get_data_dimensions(self, layer):
         data_dimensions = self.data_dimensions.get_data_shape()[0]
+        is_aux = self.data_dimensions.structure.name == "aux"
         if (
-            layer is not None
+            not is_aux
+            and layer is not None
             and self.layer_storage.get_total_size() > 1
             and self._has_layer_dim()
         ):

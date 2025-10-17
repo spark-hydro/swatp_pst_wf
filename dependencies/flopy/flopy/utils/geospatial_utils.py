@@ -49,9 +49,7 @@ class GeoSpatialUtil:
     """
 
     def __init__(self, obj, shapetype=None):
-        self.__shapefile = import_optional_dependency(
-            "shapefile", errors="silent"
-        )
+        self.__shapefile = import_optional_dependency("shapefile", errors="silent")
         self.__obj = obj
         self.__geo_interface = {}
         self._geojson = None
@@ -212,9 +210,7 @@ class GeoSpatialUtil:
         """
         if self.__shapefile is not None:
             if self._shape is None:
-                self._shape = self.__shapefile.Shape._from_geojson(
-                    self.__geo_interface
-                )
+                self._shape = self.__shapefile.Shape._from_geojson(self.__geo_interface)
             return self._shape
 
     @property
@@ -260,12 +256,10 @@ class GeoSpatialCollection:
     """
 
     def __init__(self, obj, shapetype=None):
-        self.__shapefile = import_optional_dependency(
-            "shapefile", errors="silent"
-        )
-        shapely_geo = import_optional_dependency(
-            "shapely.geometry", errors="silent"
-        )
+        self.__shapefile = import_optional_dependency("shapefile", errors="silent")
+        gpd = import_optional_dependency("geopandas", errors="silent")
+
+        shapely_geo = import_optional_dependency("shapely.geometry", errors="silent")
 
         self.__obj = obj
         self.__collection = []
@@ -275,6 +269,7 @@ class GeoSpatialCollection:
         self._flopy_geometry = None
         self._points = None
         self.__shapetype = None
+        self.__attributes = None
 
         if isinstance(obj, Collection):
             for shape in obj:
@@ -314,9 +309,7 @@ class GeoSpatialCollection:
                     shapetype = [shapetype] * len(obj)
 
                 for ix, geom in enumerate(obj):
-                    self.__collection.append(
-                        GeoSpatialUtil(geom, shapetype[ix])
-                    )
+                    self.__collection.append(GeoSpatialUtil(geom, shapetype[ix]))
 
         elif self.__shapefile is not None:
             if isinstance(obj, (str, os.PathLike)):
@@ -359,6 +352,24 @@ class GeoSpatialCollection:
                 ),
             ):
                 for geom in obj.geoms:
+                    self.__collection.append(GeoSpatialUtil(geom))
+
+        if gpd is not None:
+            if isinstance(obj, gpd.GeoDataFrame):
+                self.__attributes = {}
+                for geom in obj.geometry.values:
+                    self.__collection.append(GeoSpatialUtil(geom))
+
+                for k in list(obj):
+                    if k != "geometry":
+                        self.__attributes[k] = obj[k].values
+
+            elif isinstance(obj, gpd.GeoSeries):
+                for geom in obj.values:
+                    self.__collection.append(GeoSpatialUtil(geom))
+
+            elif isinstance(obj, gpd.array.GeometryArray):
+                for geom in obj:
                     self.__collection.append(GeoSpatialUtil(geom))
 
         if not self.__collection:
@@ -418,6 +429,23 @@ class GeoSpatialCollection:
             [i.shapely for i in self.__collection]
         )
         return self._shapely
+
+    @property
+    def geo_dataframe(self):
+        """
+        Property that returns a geopandas DataFrame
+
+        Returns
+        -------
+            geopandas.GeoDataFrame
+        """
+        gpd = import_optional_dependency("geopandas")
+        data = {"geometry": self.shapely.geoms}
+        if self.__attributes is not None:
+            for k, v in self.__attributes.items():
+                data[k] = v
+        gdf = gpd.GeoDataFrame(data)
+        return gdf
 
     @property
     def geojson(self):

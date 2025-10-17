@@ -59,7 +59,7 @@ class MfGrdFile(FlopyBinaryData):
         super().__init__()
 
         # set attributes
-        self.set_float(precision=precision)
+        self.precision = precision
         self.verbose = verbose
         self._initial_len = 50
         self._recorddict = {}
@@ -83,7 +83,7 @@ class MfGrdFile(FlopyBinaryData):
         t = line.split()
         self._version = t[1]
 
-        # version
+        # ntxt
         line = self.read_text(self._initial_len).strip()
         t = line.split()
         self._ntxt = int(t[1])
@@ -96,6 +96,8 @@ class MfGrdFile(FlopyBinaryData):
         # read text strings
         for idx in range(self._ntxt):
             line = self.read_text(self._lentxt).strip()
+            if line.startswith("#"):
+                continue
             t = line.split()
             key = t[0]
             dt = t[1]
@@ -105,6 +107,8 @@ class MfGrdFile(FlopyBinaryData):
                 dtype = np.float32
             elif dt == "DOUBLE":
                 dtype = np.float64
+            elif dt == "CHARACTER":
+                dtype = str
             else:
                 dtype = None
             nd = int(t[3])
@@ -122,7 +126,7 @@ class MfGrdFile(FlopyBinaryData):
                 print(f"  File contains data for {key} with shape {s}")
 
         if self.verbose:
-            print(f"Attempting to read {self._ntxt} records from {filename}")
+            print(f"Attempting to read {len(self._recordkeys)} records from {filename}")
 
         for key in self._recordkeys:
             if self.verbose:
@@ -133,7 +137,10 @@ class MfGrdFile(FlopyBinaryData):
                 count = 1
                 for v in shp:
                     count *= v
-                v = self.read_record(count=count, dtype=dt)
+                if dt == str:
+                    v = self.read_text(nchar=count)
+                else:
+                    v = self.read_record(count=count, dtype=dt)
             # read variable data
             else:
                 if dt == np.int32:
@@ -154,20 +161,20 @@ class MfGrdFile(FlopyBinaryData):
         self.file.close()
 
         # initialize the model grid to None
-        self.__modelgrid = None
+        self._modelgrid = None
 
         # set ia and ja
-        self.__set_iaja()
+        self._set_iaja()
 
     # internal functions
-    def __set_iaja(self):
+    def _set_iaja(self):
         """
         Set ia and ja from _datadict.
         """
         self._ia = self._datadict["IA"] - 1
         self._ja = self._datadict["JA"] - 1
 
-    def __set_modelgrid(self):
+    def _set_modelgrid(self):
         """
         Define structured, vertex, or unstructured grid based on MODFLOW 6
         discretization type.
@@ -246,11 +253,11 @@ class MfGrdFile(FlopyBinaryData):
         except:
             print(f"could not set model grid for {self.file.name}")
 
-        self.__modelgrid = modelgrid
+        self._modelgrid = modelgrid
 
         return
 
-    def __build_vertices_cell2d(self):
+    def _build_vertices_cell2d(self):
         """
         Build the mf6 vertices and cell2d array to generate a VertexGrid
 
@@ -268,7 +275,7 @@ class MfGrdFile(FlopyBinaryData):
         ]
         return vertices, cell2d
 
-    def __get_iverts(self):
+    def _get_iverts(self):
         """
         Get a list of the vertices that define each model cell.
 
@@ -280,13 +287,10 @@ class MfGrdFile(FlopyBinaryData):
         """
         iverts = None
         if "IAVERT" in self._datadict:
-            if self._grid_type == "DISV":
-                nsize = self.ncpl
-            elif self._grid_type == "DISU":
-                nsize = self.nodes
             iverts = []
             iavert = self.iavert
             javert = self.javert
+            nsize = iavert.shape[0] - 1
             for ivert in range(nsize):
                 i0 = iavert[ivert]
                 i1 = iavert[ivert + 1]
@@ -295,7 +299,7 @@ class MfGrdFile(FlopyBinaryData):
                 print(f"returning iverts from {self.file.name}")
         return iverts
 
-    def __get_verts(self):
+    def _get_verts(self):
         """
         Get a list of the x, y pair for each vertex from the data in the
         binary grid file.
@@ -320,7 +324,7 @@ class MfGrdFile(FlopyBinaryData):
                 print(f"returning verts from {self.file.name}")
         return verts
 
-    def __get_cellcenters(self):
+    def _get_cellcenters(self):
         """
         Get the cell centers centroids for a MODFLOW 6 GWF model that uses
         the DISV or DISU discretization.
@@ -361,10 +365,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         nlay : int
         """
-        if self._grid_type in ("DIS", "DISV"):
+        nlay = None
+        if "NLAY" in self._datadict:
             nlay = self._datadict["NLAY"]
-        else:
-            nlay = None
         return nlay
 
     @property
@@ -376,10 +379,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         nrow : int
         """
-        if self._grid_type == "DIS":
+        nrow = None
+        if "NROW" in self._datadict:
             nrow = self._datadict["NROW"]
-        else:
-            nrow = None
         return nrow
 
     @property
@@ -391,10 +393,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         ncol : int
         """
-        if self._grid_type == "DIS":
+        ncol = None
+        if "NCOL" in self._datadict:
             ncol = self._datadict["NCOL"]
-        else:
-            ncol = None
         return ncol
 
     @property
@@ -406,12 +407,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         ncpl : int
         """
-        if self._grid_type == "DISV":
+        ncpl = None
+        if "NCPL" in self._datadict:
             ncpl = self._datadict["NCPL"]
-        if self._grid_type == "DIS":
-            ncpl = self.nrow * self.ncol
-        else:
-            None
         return ncpl
 
     @property
@@ -423,10 +421,14 @@ class MfGrdFile(FlopyBinaryData):
         -------
         ncells : int
         """
-        if self._grid_type in ("DIS", "DISV"):
+        # disu is the only grid that has the number of cells
+        # set to nodes.  All other grids use NCELLS in grb
+        if "NCELLS" in self._datadict:
             ncells = self._datadict["NCELLS"]
-        else:
+        elif "NODES" in self._datadict:
             ncells = self._datadict["NODES"]
+        else:
+            ncells = None
         return ncells
 
     @property
@@ -438,10 +440,7 @@ class MfGrdFile(FlopyBinaryData):
         -------
         nodes : int
         """
-        if self._grid_type in ("DIS", "DISV"):
-            nodes = self.ncells
-        else:
-            nodes = self._datadict["NODES"]
+        nodes = self.ncells
         return nodes
 
     @property
@@ -455,10 +454,18 @@ class MfGrdFile(FlopyBinaryData):
         """
         if self._grid_type == "DIS":
             shape = (self.nlay, self.nrow, self.ncol)
+        elif self._grid_type == "DIS2D":
+            shape = (self.nrow, self.ncol)
         elif self._grid_type == "DISV":
             shape = (self.nlay, self.ncpl)
-        else:
+        elif self._grid_type == "DISV2D":
+            shape = (self.ncells,)
+        elif self._grid_type == "DISV1D":
+            shape = (self.ncells,)
+        elif self._grid_type == "DISU":
             shape = (self.nodes,)
+        else:
+            shape = None
         return shape
 
     @property
@@ -535,10 +542,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         delr : ndarray of floats
         """
-        if self.grid_type == "DIS":
+        delr = None
+        if "DELR" in self._datadict:
             delr = self._datadict["DELR"]
-        else:
-            delr = None
         return delr
 
     @property
@@ -551,10 +557,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         delc : ndarray of floats
         """
-        if self.grid_type == "DIS":
+        delc = None
+        if "DELC" in self._datadict:
             delc = self._datadict["DELC"]
-        else:
-            delc = None
         return delc
 
     @property
@@ -567,7 +572,10 @@ class MfGrdFile(FlopyBinaryData):
         -------
         top : ndarray of floats
         """
-        return self._datadict["TOP"]
+        top = None
+        if "TOP" in self._datadict:
+            top = self._datadict["TOP"]
+        return top
 
     @property
     def bot(self):
@@ -578,9 +586,10 @@ class MfGrdFile(FlopyBinaryData):
         -------
         bot : ndarray of floats
         """
-        if self.grid_type in ("DIS", "DISV"):
+        bot = None
+        if "BOTM" in self._datadict:
             bot = self._datadict["BOTM"]
-        else:
+        elif "BOT" in self._datadict:
             bot = self._datadict["BOT"]
         return bot
 
@@ -687,7 +696,7 @@ class MfGrdFile(FlopyBinaryData):
         -------
         iverts : list of lists of ints
         """
-        return self.__get_iverts()
+        return self._get_iverts()
 
     @property
     def verts(self):
@@ -698,7 +707,7 @@ class MfGrdFile(FlopyBinaryData):
         -------
         verts : ndarray of floats
         """
-        return self.__get_verts()
+        return self._get_verts()
 
     @property
     def cellcenters(self):
@@ -709,7 +718,7 @@ class MfGrdFile(FlopyBinaryData):
         -------
         cellcenters : ndarray of floats
         """
-        return self.__get_cellcenters()
+        return self._get_cellcenters()
 
     @property
     def modelgrid(self):
@@ -720,9 +729,9 @@ class MfGrdFile(FlopyBinaryData):
         -------
         modelgrid : StructuredGrid, VertexGrid, UnstructuredGrid
         """
-        if self.__modelgrid is None:
-            self.__set_modelgrid()
-        return self.__modelgrid
+        if self._modelgrid is None:
+            self._set_modelgrid()
+        return self._modelgrid
 
     @property
     def cell2d(self):
@@ -733,8 +742,8 @@ class MfGrdFile(FlopyBinaryData):
         -------
         cell2d : list of lists
         """
-        if self._grid_type == "DISV":
-            vertices, cell2d = self.__build_vertices_cell2d()
+        if self._grid_type in ("DISV", "DISV2D", "DISV1D"):
+            vertices, cell2d = self._build_vertices_cell2d()
         else:
             vertices, cell2d = None, None
         return vertices, cell2d

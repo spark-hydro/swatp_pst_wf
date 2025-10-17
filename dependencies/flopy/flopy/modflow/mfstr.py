@@ -7,7 +7,9 @@ MODFLOW Guide
 <https://water.usgs.gov/ogw/modflow/MODFLOW-2005-Guide/str.html>`_.
 
 """
+
 import numpy as np
+import pandas as pd
 
 from ..pakbase import Package
 from ..utils import MfList, read_fixed_var, write_fixed_var
@@ -46,10 +48,9 @@ class ModflowStr(Package):
         The constant must be multiplied by 86,400 when using time units of
         days in the simulation. If ICALC is 0, const can be any real value.
         (default is 86400.)
-    ipakcb : int
-        A flag that is used to determine if cell-by-cell budget data should be
-        saved. If ipakcb is non-zero cell-by-cell budget data will be saved.
-        (default is 0).
+    ipakcb : int, optional
+        Toggles whether cell-by-cell budget data should be saved. If None or zero,
+        budget data will not be saved (default is None).
     istcb2 : int
         A flag that is used flag and a unit number for the option to store
         streamflow out of each reach in an unformatted (binary) file.
@@ -81,8 +82,8 @@ class ModflowStr(Package):
         datasets 6 and 8.
 
         The value for stress period data for a stress period can be an integer
-        (-1 or 0), a list of lists, a numpy array, or a numpy recarray. If
-        stress period data for a stress period contains an integer, a -1
+        (-1 or 0), a list of lists, a numpy array or recarray, or a pandas
+        dataframe. If data for a stress period contains an integer, a -1
         denotes data from the previous stress period will be reused and a 0
         indicates there are no str reaches for this stress period.
 
@@ -190,11 +191,11 @@ class ModflowStr(Package):
         filenames=None the package name will be created using the model name
         and package extension and the cbc output and str output name will be
         created using the model name and .cbc the .sfr.bin/.sfr.out extensions
-        (for example, modflowtest.cbc, and modflowtest.str.bin), if ipakcbc and
+        (for example, modflowtest.cbc, and modflowtest.str.bin), if ipakcb and
         istcb2 are numbers greater than zero. If a single string is passed
         the package will be set to the string and cbc and sf routput names
         will be created using the model name and .cbc and .str.bin/.str.out
-        extensions, if ipakcbc and istcb2 are numbers greater than zero. To
+        extensions, if ipakcb and istcb2 are numbers greater than zero. To
         define the names for all package files (input and output) the length
         of the list of strings should be 3. Default is None.
 
@@ -218,7 +219,7 @@ class ModflowStr(Package):
     >>>                                         #applied to all stress periods
     >>> str = flopy.modflow.ModflowStr(m, stress_period_data=strd)
 
-    """
+    """  # noqa
 
     def __init__(
         self,
@@ -249,18 +250,11 @@ class ModflowStr(Package):
         # set filenames
         filenames = self._prepare_filenames(filenames, 3)
 
-        # update external file information with cbc output, if necessary
-        if ipakcb is not None:
-            model.add_output_file(
-                ipakcb, fname=filenames[1], package=self._ftype()
-            )
-        else:
-            ipakcb = 0
+        # cbc output file
+        self.set_cbc_output_file(ipakcb, model, filenames[1])
 
         if istcb2 is not None:
-            model.add_output_file(
-                istcb2, fname=filenames[2], package=self._ftype()
-            )
+            model.add_output_file(istcb2, fname=filenames[2], package=self._ftype())
         else:
             ipakcb = 0
 
@@ -281,14 +275,13 @@ class ModflowStr(Package):
         self.ntrib = ntrib
         self.ndiv = ndiv
         self.const = const
-        self.ipakcb = ipakcb
         self.istcb2 = istcb2
 
         # issue exception if ntrib is greater than 10
         if ntrib > 10:
             raise Exception(
                 "ModflowStr error: ntrib must be less that 10: "
-                "specified value = {}".format(ntrib)
+                f"specified value = {ntrib}"
             )
 
         if options is None:
@@ -367,29 +360,26 @@ class ModflowStr(Package):
             for key, d in stress_period_data.items():
                 if isinstance(d, list):
                     d = np.array(d)
+                if isinstance(d, pd.DataFrame):
+                    d = d.to_records(index=False)
                 if isinstance(d, np.recarray):
                     e = (
-                        "ModflowStr error: recarray dtype: {} does not match "
-                        "self dtype: {}".format(d.dtype, self.dtype)
+                        f"ModflowStr error: recarray dtype: {d.dtype} "
+                        f"does not match self dtype: {self.dtype}"
                     )
                     assert d.dtype == self.dtype, e
                 elif isinstance(d, np.ndarray):
-                    d = np.core.records.fromarrays(
-                        d.transpose(), dtype=self.dtype
-                    )
+                    d = np.rec.fromarrays(d.transpose(), dtype=self.dtype)
                 elif isinstance(d, int):
                     if model.verbose:
                         if d < 0:
-                            print(
-                                "   reusing str data from previous "
-                                "stress period"
-                            )
+                            print("   reusing str data from previous stress period")
                         elif d == 0:
                             print(f"   no str data for stress period {key}")
                 else:
                     raise Exception(
                         "ModflowStr error: unsupported data type: "
-                        "{} at kper {}".format(type(d), key)
+                        f"{type(d)} at kper {key}"
                     )
 
         # add stress_period_data to package
@@ -402,14 +392,12 @@ class ModflowStr(Package):
                     d = np.array(d)
                 if isinstance(d, np.recarray):
                     e = (
-                        "ModflowStr error: recarray dtype: {} does not match "
-                        "self dtype: {}".format(d.dtype, self.dtype2)
+                        f"ModflowStr error: recarray dtype: {d.dtype} "
+                        f"does not match self dtype: {self.dtype2}"
                     )
                     assert d.dtype == self.dtype2, e
                 elif isinstance(d, np.ndarray):
-                    d = np.core.records.fromarrays(
-                        d.transpose(), dtype=self.dtype2
-                    )
+                    d = np.rec.fromarrays(d.transpose(), dtype=self.dtype2)
                 elif isinstance(d, int):
                     if model.verbose:
                         if d < 0:
@@ -418,13 +406,11 @@ class ModflowStr(Package):
                                 "from previous stress period"
                             )
                         elif d == 0:
-                            print(
-                                f"   no str segment data for stress period {key}"
-                            )
+                            print(f"   no str segment data for stress period {key}")
                 else:
                     raise Exception(
                         "ModflowStr error: unsupported data type: "
-                        "{} at kper {}".format(type(d), key)
+                        f"{type(d)} at kper {key}"
                     )
 
         # add segment_data to package
@@ -619,16 +605,12 @@ class ModflowStr(Package):
                         ds9 = []
                         for idx in range(self.ntrib):
                             ds9.append(line[idx])
-                        f_str.write(
-                            write_fixed_var(ds9, length=fmt9, free=free)
-                        )
+                        f_str.write(write_fixed_var(ds9, length=fmt9, free=free))
 
                 # dataset 10
                 if self.ndiv > 0:
                     for line in sdata:
-                        f_str.write(
-                            write_fixed_var([line[-1]], length=10, free=free)
-                        )
+                        f_str.write(write_fixed_var([line[-1]], length=10, free=free))
 
         # close the str file
         f_str.close()
@@ -765,9 +747,7 @@ class ModflowStr(Package):
             dt = ModflowStr.get_empty(
                 1, aux_names=aux_names, structured=model.structured
             ).dtype
-            pak_parms = mfparbc.load(
-                f, npstr, dt, model, ext_unit_dict, model.verbose
-            )
+            pak_parms = mfparbc.load(f, npstr, dt, model, ext_unit_dict, model.verbose)
 
         if nper is None:
             nper = model.nper
@@ -841,26 +821,19 @@ class ModflowStr(Package):
                             parval = float(par_dict["parval"])
                         else:
                             try:
-                                parval = float(
-                                    model.mfpar.pval.pval_dict[pname]
-                                )
+                                parval = float(model.mfpar.pval.pval_dict[pname])
                             except:
                                 parval = float(par_dict["parval"])
 
                         # fill current parameter data (par_current)
                         for ibnd, t in enumerate(data_dict):
-                            current[ibnd] = tuple(
-                                t[: len(current.dtype.names)]
-                            )
+                            current[ibnd] = tuple(t[: len(current.dtype.names)])
 
                 else:
                     if model.verbose:
                         print("   reading str dataset 6")
                     current, current_seg = ModflowStr.get_empty(
-                        itmp,
-                        nss,
-                        aux_names=aux_names,
-                        structured=model.structured,
+                        itmp, nss, aux_names=aux_names, structured=model.structured
                     )
                     for ibnd in range(itmp):
                         line = f.readline()
@@ -949,9 +922,7 @@ class ModflowStr(Package):
                 ext_unit_dict, filetype=ModflowStr._ftype()
             )
             if ipakcb > 0:
-                iu, filenames[1] = model.get_ext_dict_attr(
-                    ext_unit_dict, unit=ipakcb
-                )
+                iu, filenames[1] = model.get_ext_dict_attr(ext_unit_dict, unit=ipakcb)
             if abs(istcb2) > 0:
                 iu, filenames[2] = model.get_ext_dict_attr(
                     ext_unit_dict, unit=abs(istcb2)
