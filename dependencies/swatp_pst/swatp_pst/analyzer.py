@@ -14,6 +14,7 @@ from scipy import stats
 from swatp_pst import handler
 from tqdm import tqdm
 
+
 # uncertainty
 def single_plot_tseries_ensembles(
                     pst, pr_oe, pt_oe, width=10, height=4, dot=True,
@@ -184,6 +185,27 @@ def single_plot_tseries_ensembles_plots_added(
 #     print(os.getcwd())  
 
 #     # return pr_oe_min
+
+def single_fdc(df):
+    # from get_stf_sim_obd
+    fig, ax = plt.subplots()
+    odd, oeexd = convert_fdc_data(df.iloc[:, 1].values)
+    sdd, seexd = convert_fdc_data(df.iloc[:, 0].values)
+    ax.plot(seexd*100, sdd, lw=2, label="sim")
+    ax.plot(oeexd*100, odd, lw=2, label="obd")
+    ax.set_yscale('log')
+    # ax.set_xlabel(r"Exceedence [%]", fontsize=12)
+    # ax.set_ylabel(r"Flow rate $[m^3/s]$", fontsize=12)
+    ax.margins(0.01)
+    # ax.tick_params(axis='both', labelsize=12)
+    # plt.legend(fontsize=12, loc="lower left")
+    # ax.text(
+    #     1, 0.8, f'rel{rel_idx}', fontsize=10,
+    #     horizontalalignment='right',
+        # transform=ax.transAxes)
+    plt.tight_layout()
+    # plt.savefig(f'fdc_{obgnme}.png', bbox_inches='tight', dpi=300)
+    plt.show()
 
 def single_plot_fdc_added(
                     pst,
@@ -450,9 +472,6 @@ def plot_tseries_ensembles(
     plt.savefig(f'tensemble_{obgnam}.png', bbox_inches='tight', dpi=300)
     # plt.show()
     # '''
-
-
-
 
 def plot_onetone_ensembles(
                     pst, pr_oe, pt_oe, width=5, height=4.5, dot=True,
@@ -1538,11 +1557,206 @@ def albufera_predictive_results(wd):
     # sfdf2 = read_sobol_sfi(wd2, pst_file2)
 
 
+
+class SWATp:
+
+    def plot_stress(self, df, stress=None, w=12, h=4):
+        """plot stress for crop
+
+        :param df: dataframe from handler.get_paddy_stress_df
+        :type df: dataframe
+        :param stress: stress type, defaults to None, strsw
+        :type stress: string, optional
+        :return: bar charts for stress
+        :rtype: figre
+        """
+        if stress is None:
+            stress = "strsw"
+
+        N = len(df.columns)
+        ind = np.arange(N)  # the x locations for the groups
+        width = 0.4
+
+        fig, ax = plt.subplots(figsize=(w,h))
+        # Width of a bar 
+        error_kw=dict(lw=1, capsize=2, capthick=1, alpha=0.5)
+
+        # tcolor = sftsm + sttsm
+        # colors = plt.cm.rainbow(tcolor/max(tcolor))
+        # tphicolor = sfphi.iloc[0, 1:].values + stphi.iloc[0, 1:].values
+        # # phico = plt.cm.rainbow(tphicolor/max(tphicolor))
+        # # ax.plot(np.NaN, np.NaN, '-', color='none', label='Variance based')
+
+        # ax.bar(
+        #     df.index, df.strsw, width, 
+        #     color="C0", label=r"First order $S_i - variance$", 
+        #     error_kw=error_kw
+        #     )
+        ax.bar(
+            df.index, df.loc[:, stress], width, 
+            color="C0", label=r"First order $S_i - variance$", 
+            error_kw=error_kw
+            )      
+
+        # ax.bar(
+        #     ind, sttsm, width, bottom=sftsm,
+        #     color="C0", yerr=sfts_cfis, label=r"Total order $S_{Ti} - variance$", error_kw=error_kw,
+        #     alpha=0.5
+        #     )
+        # # ax.plot(np.NaN, np.NaN, '-', color='none', label=r'Objective function $(phi)$')
+        # ax.bar(
+        #     ind + 0.3, sfphi.iloc[0, 1:].values, phiwidth, 
+        #     color="C1", label=r"First order $S_i$ - objective function",
+        #     )
+        # ax.bar(
+        #     ind + 0.3, stphi.iloc[0, 1:].values, phiwidth, 
+        #     bottom=sfphi.iloc[0, 1:].values,
+        #     color='C1', label=r"Total order $S_{Ti} - objective function$", alpha=0.5
+        #     )
+        ax.margins(x=0.01)
+        ax.tick_params(axis='x', labelrotation=90)
+        fig.tight_layout()
+        plt.savefig(f'stress_{stress}.png', bbox_inches='tight', dpi=300)
+        plt.show()
+        print(os.getcwd())
+
+
+    def violin_hru_lsu(ax, df, name, color='C0'):
+        # flierprops = dict(
+        #                 marker='o', 
+        #                 markerfacecolor='#fc0384', 
+        #                 markersize=7,
+        #                 # linestyle='None',
+        #                 # markeredgecolor='none',
+        #                 alpha=0.3)
+        # if color is None:
+        #     color = 'C0'
+
+
+        r = ax.violinplot(
+            df,  
+            widths=(0.5),
+            showmeans=True, showextrema=True, showmedians=False,
+            # quantiles=[[0.25, 0.75]]*len(days),
+            quantiles=[[0.25, 0.75]],
+            bw_method='silverman'
+            )
+        r['cmeans'].set_color('r')
+        r['cquantiles'].set_color('r')
+        r['cquantiles'].set_linestyle(':')
+
+        # r['cquantiles'].set_linewidth(3)
+        # colors = ['#c40243', "#04b0db", '#038f18', ]
+        colors = [color]
+        for c, pc in zip(colors, r['bodies']):
+            pc.set_facecolor(c)
+        #     pc.set_edgecolor('black')
+            pc.set_alpha(0.4)
+        ax.set_xticks([1])
+        # ax.set_xticklabels(df_m.keys(), rotation=90)
+        ax.set_xticklabels([name])
+        # ax.set_xticklabels(x_names)
+        ax.tick_params(axis='both', labelsize=10)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(axis='y')
+        # plt.tight_layout()
+        # lastfolder = os.path.basename(os.path.normpath(os.getcwd()))
+        # plt.savefig(os.path.join(os.getcwd(), f'HUI_{lastfolder}.png'), dpi=300, bbox_inches="tight")
+        # plt.show()
+        return ax
+    
+    def create_stat_df(df):
+        mini = min(df)
+        # Calculate the 25th percentile (first quartile)
+        q1 = np.quantile(df, 0.25)
+        # Calculate the average values
+        avg = np.mean(df)
+        # Calculate the 50th percentile (median)
+        median = np.quantile(df, 0.5)
+        # Calculate the 75th percentile (third quartile)
+        q3 = np.quantile(df, 0.75)
+        maxi = max(df)
+        return mini, q1, avg, median, q3, maxi
+
+    def pie_landuse(ax, df, threshold=1):
+        df = df.loc[df["perct"]>threshold]
+        labels = [x[:-4] if x.endswith('_lum') else x for x in df.index]
+        ax.pie(
+            df.area, 
+            # labels=labels, 
+            autopct='%1.1f%%',
+            pctdistance=1.15, labeldistance=1.3, textprops={'fontsize': 10},
+            colors=plt.cm.Pastel2.colors)
+        ax.axis('equal')
+
+    def bar_monthly_weather(ax, ax1, df):
+
+        ax1.plot(df.index, df.tmpav, 'r', zorder=2)
+        ax1.fill_between(df.index, df.tmn, df.tmx, color = 'pink', alpha = 0.6)
+        ax.bar(df.index, df.precip, zorder=1, width = 0.7)
+        xlabels = ['Jan','Feb','Mar','Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+           'Oct', 'Nov', 'Dec']
+        # Set number of ticks for x-axis
+        ax.set_xticks(df.index)
+        # Set ticks labels for x-axis
+        ax.set_xticklabels(xlabels)
+        ax.tick_params(axis='both', labelsize=10)
+        ax1.tick_params(axis='both', labelsize=10)
+        ax.set_ylabel("Precipitation $(mm/month)$",fontsize=12)
+        ax1.set_ylabel("Temperature $(C^0)$",fontsize=12)
+
+        return ax
+
+    def bar_weather_irr(ax, ax1, ax2, df):
+
+        ax.bar(df.index, df.precip, zorder=1, width = 0.7)
+        ax2.spines['right'].set_position(('outward', 60))
+        ax2.bar(df.index, df.loc[:, "tot_irr"], zorder=1, width = 0.7, color='C2')
+        ax2.set_ylabel('Irrigation $(mm/month)$', color='C2', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='C2')
+        ax1.plot(df.index, df.tmpav, 'r', zorder=5)
+        ax1.fill_between(df.index, df.tmn, df.tmx, color = 'pink', alpha = 0.6, zorder=5)
+
+        xlabels = ['Jan','Feb','Mar','Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+           'Oct', 'Nov', 'Dec']
+        # Set number of ticks for x-axis
+        ax.set_xticks(df.index)
+        # Set ticks labels for x-axis
+        ax.set_xticklabels(xlabels)
+        ax.tick_params(axis='both', labelsize=10)
+        ax.tick_params(axis='y', labelcolor='C0')
+        ax1.tick_params(axis='both', labelsize=10)
+        ax1.tick_params(axis='y', labelcolor='crimson')
+        ax2.tick_params(axis='both', labelsize=10)
+        ax.set_ylabel("Precipitation $(mm/month)$",fontsize=12, color='C0')
+        ax1.set_ylabel("Temperature $(C^0)$",fontsize=12, color='crimson')
+        return ax
+
+
+    def plot_yield(ax, df):
+        ax.bar(df.index, df.iloc[:, 0], width=0.7, label="Simulated, Dawhenya SWAT+ Paddy Model", color="C2", alpha=0.7)
+        # ax.plot(df.index, df.iloc[:, 0], "v-",markerfacecolor="None", label="Simulated, Botanga HRU Model")
+        # ax.plot(df.index, df.iloc[:, 0], "v-",markerfacecolor="None", label="Simulated, Botanga HRU Model")
+        ax.plot(
+            df.index, df.iloc[:, 1], "o-", 
+            markerfacecolor="None", 
+            label="Observed, Ningo/Prampram from District Data", 
+            color="m")
+        ax.plot(
+            df.index, df.iloc[:, 2], "v-", 
+            markerfacecolor="None", 
+            label="Observed, Greater Accra Region from USDA FAS", color="r")
+        ax.set_ylabel("Average Rice Yield $(MT/HA)$", fontsize=12)
+        ax.tick_params(axis='both', labelsize=12)
+        return ax
+
+
 # '''
-class Paddy(object):
+class Paddy:
     def __init__(self, wd):
-        self.wd = wd
-        os.chdir(self.wd)
+        # super().__init__(wd)
+        os.chdir(wd)
 
     def plot_paddy_daily(self, df):
         cmap = plt.get_cmap("tab10")
@@ -1553,8 +1767,31 @@ class Paddy(object):
             ax.legend(loc="upper left", fontsize=12)
         
             ax.tick_params(axis='both', labelsize=12)
+            ax.tick_params(axis='x', labelrotation=45)
         plt.tight_layout()
         plt.show()
+
+    def plot_paddy_daily_bar(self, df):
+        cmap = plt.get_cmap("tab10")
+        nums = len(df.columns)
+        fig, axes = plt.subplots(nrows=nums, sharex=True, figsize=(9, 13))
+        for i, (col, ax) in enumerate(zip(df.columns, axes)):
+            ax.bar(df.index, df[col], color=cmap(i), label=col, width=0.7)
+            ax.bar_label(
+                ax.containers[0], label_type='center', padding=5, fontsize=10,
+                bbox=dict(
+                    facecolor='white', alpha=0.8, 
+                    # edgecolor='none'
+                    ))
+            ax.legend(loc="upper left", fontsize=12)
+
+            ax.tick_params(axis='both', labelsize=12)
+            ax.tick_params(axis='x', labelrotation=45)
+        plt.tight_layout()
+        plt.show()
+
+
+
 
     def plot_yield(self, df):
         fig, ax = plt.subplots()
